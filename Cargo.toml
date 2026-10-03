@@ -1,0 +1,15 @@
+[package]
+name = "interceptor-dev"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap-config-file = "0.6.0"
+serde = { version = "1.0", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+config = "0.14"
+bollard = "0.21.1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+futures-util = "0.3"
+chrono = "0.4"
