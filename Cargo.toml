@@ -3,6 +3,9 @@ name = "interceptor-dev"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "interceptor"
+
 [dependencies]
 clap-config-file = "0.6.0"
 serde = { version = "1.0", features = ["derive"] }
