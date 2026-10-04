@@ -1,5 +1,7 @@
 mod configs;
 mod filepath;
+mod node;
+mod p2p;
 mod testnet;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -7,6 +9,8 @@ use bollard::Docker;
 use bollard::query_parameters::{CreateImageOptionsBuilder, ListImagesOptionsBuilder};
 use configs::Config as AppConfig;
 use futures_util::TryStreamExt;
+use serde_json::Value;
+use std::fs;
 
 pub async fn ensure_docker(docker: &Docker, image: &str, auto_pull: bool) -> Result<()> {
     docker.ping().await?; // 确认docker deamon可用
@@ -85,5 +89,24 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    // /tmp/cluster-id/config/node[0-4]/
+    // config.toml  genesis.json  node_key.json  priv_validator_key.json
+
+    for i in 0..config.num_nodes {
+        let key_path = run_paths
+            .testnet_config_dir
+            .join(format!("node{i}/node_key.json"));
+        let node = p2p::NodeID::load(&key_path)?;
+        // println!("node{i}: {node:?}");
+    }
+
+    let node0_dir = run_paths.testnet_config_dir.join("node0");
+    let identity = p2p::NodeID::load(&node0_dir.join("node_key.json"))?;
+
+    println!("Expected node0 ID: {}", identity.id);
+
+    let container_id = node::start_node(&docker, &node0_dir, &config.docker_image).await?;
+
+    println!("Started container: {container_id}");
     Ok(())
 }

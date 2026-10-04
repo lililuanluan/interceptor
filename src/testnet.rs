@@ -9,7 +9,9 @@ use anyhow::{Context, Result, ensure};
 use bollard::{
     Docker,
     models::{ContainerCreateBody, HostConfig},
-    query_parameters::{LogsOptionsBuilder, WaitContainerOptionsBuilder},
+    query_parameters::{
+        LogsOptionsBuilder, RemoveContainerOptionsBuilder, WaitContainerOptionsBuilder,
+    },
 };
 use futures_util::TryStreamExt;
 
@@ -103,7 +105,10 @@ pub async fn init_testnet_config(
 
     // 到这里容器成功退出，将容器移除，但是宿主机上生成的配置文件保留
     docker
-        .remove_container(&id, None)
+        .remove_container(
+            &id,
+            Some(RemoveContainerOptionsBuilder::default().v(true).build()),
+        ) // 删除匿名卷
         .await
         .with_context(|| format!("failed to remove container {id}"))?;
 

@@ -22,6 +22,9 @@ pub struct Config {
 
     #[config_arg(accept_from = "cli_and_config")]
     pub cluster_id: Option<String>,
+
+    #[config_arg(default_value = "10")]
+    pub max_block: u32, // run 0-max_block blocks
 }
 
 #[derive(Debug)]
