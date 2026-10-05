@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
         .and_then(|binding| binding.host_port.as_deref())
         .context("Missing RPC port")?;
 
-    let node_info = p2p::fetch_node_info(&format!("http://127.0.0.1:{port}")).await?;
+    let node_info = node::fetch_node_info(&format!("http://127.0.0.1:{port}")).await?;
     println!("{node_info}");
 
     Ok(())
