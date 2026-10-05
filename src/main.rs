@@ -1,7 +1,7 @@
 use crate::configs::Config as AppConfig;
 use crate::docker::ensure_docker;
-use anyhow::{Result, ensure};
-use bollard::Docker;
+use anyhow::{Context, Result, ensure};
+use bollard::{Docker, plugin::ContainerInspectResponse};
 
 use interceptor::*;
 
@@ -48,5 +48,31 @@ async fn main() -> Result<()> {
     let container_id = node::start_node(&docker, &node0_dir, &config.docker_image).await?;
 
     println!("Started container: {container_id}");
+
+    let container_inspect: ContainerInspectResponse = docker
+        .inspect_container(&container_id, None)
+        .await
+        .context(format!("container id {container_id} inspect failed"))?;
+
+    // 获取端口映射
+    // 返回option的时候，用.context转换位result，.with_context是提供闭包，而context只需要提供字符串
+    let port_map = container_inspect
+        .network_settings
+        .context("Missing network_settings")?
+        .ports
+        .context("Missing ports")?;
+    println!("{:?}", port_map);
+
+    // {"26657/tcp": Some([PortBinding { host_ip: Some("127.0.0.1"), host_port: Some("45500") }])}
+    let port = port_map
+        .get("26657/tcp") // 节点的rpc端口，26656/tcp是p2p端口
+        .and_then(|bindings| bindings.as_ref())
+        .and_then(|bindings| bindings.first())
+        .and_then(|binding| binding.host_port.as_deref())
+        .context("Missing RPC port")?;
+
+    let node_info = p2p::fetch_node_info(&format!("http://127.0.0.1:{port}")).await?;
+    println!("{node_info}");
+
     Ok(())
 }

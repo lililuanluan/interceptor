@@ -65,3 +65,41 @@ impl NodeID {
         Ok(Self { priv_key, id })
     }
 }
+
+pub async fn fetch_node_info(rpc_url: &str) -> Result<Value> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()?;
+
+    let url = format!("{}/status", rpc_url.trim_end_matches('/')); // http://127.0.0.1:26657/status CometBFT 定义的接口路径
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let result: Result<Value> = async {
+                let response: Value = client
+                    .get(&url) // 构造向这个接口的GET请求
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await?;
+
+                response
+                    .get("result")
+                    .and_then(|res| res.get("node_info"))
+                    .cloned()
+                    .context("RPC response doesn't contain node_info")
+            }
+            .await;
+
+            match result {
+                Ok(info) => return Ok(info),
+                Err(err) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    })
+    .await
+    .context("RPC not ready within 10 seconds")?
+}
