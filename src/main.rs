@@ -41,9 +41,9 @@ async fn main() -> Result<()> {
     }
 
     let node0_dir = run_paths.testnet_config_dir.join("node0");
-    let identity = p2p::NodeID::load(&node0_dir.join("node_key.json"))?;
+    let node0_identity = p2p::NodeID::load(&node0_dir.join("node_key.json"))?;
 
-    println!("Expected node0 ID: {}", identity.id);
+    println!("Expected node0 ID: {}", node0_identity.id);
 
     let container_id = node::start_node(&docker, &node0_dir, &config.docker_image).await?;
 
@@ -64,15 +64,35 @@ async fn main() -> Result<()> {
     println!("{:?}", port_map);
 
     // {"26657/tcp": Some([PortBinding { host_ip: Some("127.0.0.1"), host_port: Some("45500") }])}
-    let port = port_map
+    let rpc_port = port_map
         .get("26657/tcp") // 节点的rpc端口，26656/tcp是p2p端口
         .and_then(|bindings| bindings.as_ref())
         .and_then(|bindings| bindings.first())
         .and_then(|binding| binding.host_port.as_deref())
         .context("Missing RPC port")?;
 
-    let node_info = node::fetch_node_info(&format!("http://127.0.0.1:{port}")).await?;
+    let node_info = node::fetch_node_info(&format!("http://127.0.0.1:{rpc_port}")).await?;
     println!("{node_info}");
+
+    let p2p_port = port_map
+        .get("26656/tcp")
+        .and_then(|bindings| bindings.as_ref())
+        .and_then(|bindings| bindings.first())
+        .and_then(|binding| binding.host_port.as_deref())
+        .context("Missing p2p port")?;
+    let p2p_addr: std::net::SocketAddr = format!("127.0.0.1:{p2p_port}").parse()?;
+
+    // 假装自己是node1，尝试和node0建立连接
+    let node1_dir = run_paths.testnet_config_dir.join("node1");
+    let node1_identity = p2p::NodeID::load(&node1_dir.join("node_key.json"))?;
+    let expect_node0_id = node0_identity.id.clone();
+    let remote_id = tokio::task::spawn_blocking(move || {
+        // 等待网络和握手会阻塞线程
+        p2p::probe_secret_connection(p2p_addr, &node1_identity, &expect_node0_id)
+    })
+    .await??;
+
+    println!("SecretConnection to {remote_id} OK");
 
     Ok(())
 }

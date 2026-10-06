@@ -24,13 +24,22 @@ pub async fn start_node(docker: &Docker, config_dir: &Path, image: &str) -> Resu
 
     fs::write(&config_toml_path, toml::to_string_pretty(&config)?)?;
 
-    let port_bindings = HashMap::from([(
-        "26657/tcp".to_owned(), // 容器内部的tcp 26657 端口，用于rpc，to_owned()转换为String，将其绑定到宿主的 ip:port
-        Some(vec![PortBinding {
-            host_ip: Some("127.0.0.1".into()), // 宿主的ip就是127.0.0.1
-            host_port: Some(String::new()), // 注意！这里提供""，让docker自动分配端口，这样可以并行开多个cluster
-        }]),
-    )]);
+    let port_bindings = HashMap::from([
+        (
+            "26657/tcp".to_owned(), // 容器内部的tcp 26657 端口，用于rpc，to_owned()转换为String，将其绑定到宿主的 ip:port
+            Some(vec![PortBinding {
+                host_ip: Some("127.0.0.1".into()), // 宿主的ip就是127.0.0.1
+                host_port: Some(String::new()), // 注意！这里提供""，让docker自动分配端口，这样可以并行开多个cluster
+            }]),
+        ),
+        (
+            "26656/tcp".to_owned(), // 26656为p2p端口，用于节点之间连接的
+            Some(vec![PortBinding {
+                host_ip: Some("127.0.0.1".into()),
+                host_port: Some(String::new()),
+            }]),
+        ),
+    ]);
 
     let body = ContainerCreateBody {
         image: Some(image.to_owned()),
@@ -39,7 +48,7 @@ pub async fn start_node(docker: &Docker, config_dir: &Path, image: &str) -> Resu
         entrypoint: Some(vec!["/bin/sh".into()]),
         cmd: Some(vec!["-c".into(), script, "arg0-placeholder".into()]),
 
-        exposed_ports: Some(vec!["26657/tcp".into()]),
+        exposed_ports: Some(vec!["26657/tcp".into(), "26656/tcp".into()]),
         host_config: Some(HostConfig {
             binds: Some(vec![format!("{}:/input-config:ro", config_dir.display())]), // 将 config_dir（/tmp/cluster-id/config/） 映射到容器内的 /input-config/ ro只读
             port_bindings: Some(port_bindings),

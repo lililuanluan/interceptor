@@ -18,6 +18,8 @@ pub struct NodeID {
     pub id: String,
 }
 
+use tendermint_p2p::secret_connection::{SecretConnection, Version};
+
 impl NodeID {
     // Example: cluster-id/config/node0/node_key.json
     /*
@@ -64,4 +66,30 @@ impl NodeID {
 
         Ok(Self { priv_key, id })
     }
+}
+
+// 公钥是公开的，所以提供公钥并不能证明身份，需要证明手里真的有私钥
+// 这里握手就是通过一方签名另一方验签，签名对象就是本次握手的相关数据
+// 需要验证：
+// - 对方持有正确的公钥（如果对方提供自己的公私钥，但不是配置中的那把公钥也不行）
+// -  对方有这把正确公钥对应的私钥
+pub fn probe_secret_connection(
+    addr: SocketAddr,
+    local: &NodeID,
+    expected_remote_id: &str,
+) -> Result<String> {
+    let timeout = Duration::from_secs(3);
+
+    // 通过addr建立一个连接
+    let stream = TcpStream::connect_timeout(&addr, timeout)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+
+    // 建立加密连接
+    let connection = SecretConnection::new(stream, local.priv_key.clone(), Version::V0_34)?; // 向对方证明自己身份和验证对方身份，建立加密连接
+
+    let remote_id = connection.remote_pubkey().peer_id().to_string();
+
+    ensure!(remote_id == expected_remote_id, "Unexpected peer");
+    Ok(remote_id)
 }
