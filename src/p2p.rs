@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_consensus::SigningKey;
+use prost::Message;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -19,6 +20,7 @@ pub struct NodeID {
 }
 
 use tendermint_p2p::secret_connection::{SecretConnection, Version};
+use tendermint_proto::p2p::DefaultNodeInfo;
 
 impl NodeID {
     // Example: cluster-id/config/node0/node_key.json
@@ -73,11 +75,11 @@ impl NodeID {
 // 需要验证：
 // - 对方持有正确的公钥（如果对方提供自己的公私钥，但不是配置中的那把公钥也不行）
 // -  对方有这把正确公钥对应的私钥
-pub fn probe_secret_connection(
+pub fn make_secret_connection(
     addr: SocketAddr,
     local: &NodeID,
     expected_remote_id: &str,
-) -> Result<String> {
+) -> Result<SecretConnection<TcpStream>> {
     let timeout = Duration::from_secs(3);
 
     // 通过addr建立一个连接
@@ -91,5 +93,56 @@ pub fn probe_secret_connection(
     let remote_id = connection.remote_pubkey().peer_id().to_string();
 
     ensure!(remote_id == expected_remote_id, "Unexpected peer");
-    Ok(remote_id)
+    Ok(connection)
+}
+
+pub fn send_local_node_info(
+    connection: &mut SecretConnection<TcpStream>,
+    local_info: &DefaultNodeInfo,
+) -> Result<()> {
+    let bytes = local_info.encode_length_delimited_to_vec(); // 编码为长度+内容
+    connection.write_all(&bytes)?;
+    connection.flush()?;
+    Ok(())
+}
+
+pub fn receive_remote_node_info(
+    connection: &mut SecretConnection<TcpStream>,
+) -> Result<DefaultNodeInfo> {
+    const max_bytes: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/node_info.go#L16
+
+    // 对方发来一个长度加一个内容，但是这个长度的数据是varint，可变长度整数，不一定是一个字节，所以需要一个一个读
+    // 那么如何知道后面还有没有字节呢？varint规定，每个字节的最高位标识后面是否还有字节，这一位不参与计算
+    // 这个varint的长度数据最多10个字节
+    let mut prefix = [0u8; 10];
+    let mut len: Option<usize> = None;
+
+    for i in 0..prefix.len() {
+        // 读取一个字节
+        connection.read_exact(&mut prefix[i..(i + 1)])?; // read_exact输入buffer多大就读多少字节
+
+        let hi_bit = prefix[i] & 0x80;
+        if hi_bit == 0 {
+            len = Some(prost::decode_length_delimiter(&prefix[..=i])?);
+            break;
+        }
+    }
+    let len: usize = len.context("cannot read length prefix")?;
+    ensure!(len <= max_bytes, "len exceeds 10kB");
+
+    let mut buffer = vec![0u8; len];
+
+    connection.read_exact(&mut buffer)?;
+
+    Ok(DefaultNodeInfo::decode(&buffer[..len])?)
+}
+
+// 有了connection之后，需要把自己的nodeinfo传送过去，对方检查兼容性等
+pub fn exchanged_node_info(
+    connection: &mut SecretConnection<TcpStream>,
+    local_info: &DefaultNodeInfo,
+) -> Result<DefaultNodeInfo> {
+    // 将自己的nodeinfo发给对方，并接收对方发来的nodeinfo，返回对方的nodeinfo
+    send_local_node_info(connection, local_info)?;
+    receive_remote_node_info(connection)
 }

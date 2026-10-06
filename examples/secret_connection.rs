@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
     let expect_node0_id = node0_identity.id.clone();
     let remote_id = tokio::task::spawn_blocking(move || {
         // 等待网络和握手会阻塞线程
-        p2p::probe_secret_connection(p2p_addr, &node1_identity, &expect_node0_id)
+        p2p::make_secret_connection(p2p_addr, &node1_identity, &expect_node0_id)
     })
     .await??;
 
