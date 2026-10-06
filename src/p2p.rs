@@ -13,7 +13,7 @@ use prost::Message;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NodeID {
     pub priv_key: SigningKey, // 用priv_key.verification_key()可以获取公钥
     pub id: String,

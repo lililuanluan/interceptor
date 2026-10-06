@@ -1,14 +1,108 @@
+use crate::p2p::{NodeID, exchanged_node_info, make_secret_connection};
+use anyhow::Context;
 use anyhow::Result;
+use anyhow::ensure;
+use bollard::models::ContainerInspectResponse;
 use bollard::{
     Docker,
     models::{ContainerCreateBody, HostConfig, PortBinding},
+    plugin::ContainerCreateResponse,
 };
-use std::{collections::HashMap, fs, path::Path};
-
-use std::time::Duration;
-
-use anyhow::Context;
 use serde_json::Value;
+use std::net::TcpStream;
+use std::time::Duration;
+use std::{
+    collections::HashMap,
+    fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
+use tendermint_p2p::secret_connection::SecretConnection;
+use tendermint_proto::p2p::{DefaultNodeInfo, DefaultNodeInfoOther, ProtocolVersion};
+
+pub struct Node {
+    pub identity: NodeID,
+    pub config_dir: PathBuf, // Path不是固定大小类型
+    pub container_id: String,
+    pub port_map: HashMap<String, Option<Vec<PortBinding>>>,
+    pub node_info: DefaultNodeInfo,
+    pub p2p_port: u16,
+    pub p2p_addr: SocketAddr,
+    pub rpc_url: String,
+    pub rpc_port: u16,
+}
+
+impl Node {
+    pub async fn new(docker: &Docker, config_dir: &Path, image: &str) -> Result<Self> {
+        let container_id = start_node(docker, config_dir, image).await?;
+        let node_id = NodeID::load(&config_dir.join("node_key.json"))?;
+        let container_inspect: ContainerInspectResponse = docker
+            .inspect_container(&container_id, None)
+            .await
+            .context(format!("container id {container_id} inspect failed"))?;
+
+        // 获取端口映射
+        // 返回option的时候，用.context转换位result，.with_context是提供闭包，而context只需要提供字符串
+        let port_map = container_inspect
+            .network_settings
+            .context("Missing network_settings")?
+            .ports
+            .context("Missing ports")?;
+
+        let p2p_port: u16 = port_map
+            .get("26656/tcp")
+            .and_then(|bindings| bindings.as_ref())
+            .and_then(|bindings| bindings.first())
+            .and_then(|binding| binding.host_port.as_deref())
+            .context("Missing p2p port")?
+            .parse()?;
+
+        let rpc_port = port_map
+            .get("26657/tcp") // 节点的rpc端口，26656/tcp是p2p端口
+            .and_then(|bindings| bindings.as_ref())
+            .and_then(|bindings| bindings.first())
+            .and_then(|binding| binding.host_port.as_deref())
+            .context("Missing RPC port")?
+            .parse()?;
+
+        let rpc_url = format!("http://127.0.0.1:{rpc_port}");
+        let node_info = fetch_node_info(&rpc_url).await?;
+        let node_info = parse_node_info(&node_info)?;
+        let addr = SocketAddr::from(([127, 0, 0, 1], p2p_port));
+
+        Ok(Self {
+            identity: node_id,
+            config_dir: config_dir.to_path_buf(), // Path不是固定大小类型
+            container_id: container_id,
+            port_map: port_map,
+            node_info: node_info,
+            p2p_port: p2p_port,
+            rpc_port: rpc_port,
+            rpc_url: rpc_url,
+            p2p_addr: addr,
+        })
+    }
+
+    pub async fn connect(&self, other: &Self) -> Result<SecretConnection<TcpStream>> {
+        let other_addr = other.p2p_addr;
+        let expect_other_id = other.identity.id.clone();
+        let my_identity = self.identity.clone();
+        let my_info = self.node_info.clone();
+        tokio::task::spawn_blocking(move || {
+            // 等待网络和握手会阻塞线程
+            let mut connection =
+                make_secret_connection(other_addr, &my_identity, &expect_other_id)?;
+
+            let other_info = exchanged_node_info(&mut connection, &my_info)?;
+            ensure!(
+                other_info.default_node_id == expect_other_id,
+                "NodeInfo ID does not match authenticated peer"
+            );
+            Ok::<_, anyhow::Error>(connection)
+        })
+        .await?
+    }
+}
 
 // 启动一个节点容器
 pub async fn start_node(docker: &Docker, config_dir: &Path, image: &str) -> Result<String> {
@@ -103,4 +197,43 @@ pub async fn fetch_node_info(rpc_url: &str) -> Result<Value> {
     })
     .await
     .context("RPC not ready within 10 seconds")?
+}
+
+fn parse_node_info(info: &Value) -> Result<DefaultNodeInfo> {
+    // 用 JSON 路径提取字符串，例如 /other/tx_index。
+    let text = |path: &str| -> Result<&str> {
+        info.pointer(path)
+            .and_then(Value::as_str)
+            .with_context(|| format!("Missing or invalid field: {path}"))
+    };
+
+    // 同时接受 JSON 数字和数字字符串。
+    let number = |path: &str| -> Result<u64> {
+        if let Some(n) = info.pointer(path).and_then(Value::as_u64) {
+            return Ok(n);
+        }
+
+        Ok(text(path)?.parse()?)
+    };
+
+    Ok(DefaultNodeInfo {
+        default_node_id: text("/id")?.to_owned(),
+        listen_addr: text("/listen_addr")?.to_owned(),
+        network: text("/network")?.to_owned(),
+        version: text("/version")?.to_owned(),
+        moniker: text("/moniker")?.to_owned(),
+
+        channels: hex::decode(text("/channels")?)?,
+
+        protocol_version: Some(ProtocolVersion {
+            p2p: number("/protocol_version/p2p")?,
+            block: number("/protocol_version/block")?,
+            app: number("/protocol_version/app")?,
+        }),
+
+        other: Some(DefaultNodeInfoOther {
+            tx_index: text("/other/tx_index")?.to_owned(),
+            rpc_address: text("/other/rpc_address")?.to_owned(),
+        }),
+    })
 }
