@@ -1,4 +1,4 @@
-use crate::p2p::{NodeID, exchanged_node_info, make_secret_connection};
+use crate::p2p::{NodeID, PeerConnection, exchanged_node_info, make_secret_connection};
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::ensure;
@@ -83,7 +83,7 @@ impl Node {
         })
     }
 
-    pub async fn connect(&self, other: &Self) -> Result<SecretConnection<TcpStream>> {
+    pub async fn connect(&self, other: &Self) -> Result<PeerConnection> {
         let other_addr = other.p2p_addr;
         let expect_other_id = other.identity.id.clone();
         let my_identity = self.identity.clone();

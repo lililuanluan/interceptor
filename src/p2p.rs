@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{Read, Write},
+    io::{BufReader, Read, Write},
     net::{SocketAddr, TcpStream},
     path::Path,
     time::Duration,
@@ -19,8 +19,10 @@ pub struct NodeID {
     pub id: String,
 }
 
-use tendermint_p2p::secret_connection::{SecretConnection, Version};
+use tendermint_p2p::secret_connection::{DATA_MAX_SIZE, SecretConnection, Version};
 use tendermint_proto::p2p::DefaultNodeInfo;
+
+pub type PeerConnection = BufReader<SecretConnection<TcpStream>>;
 
 impl NodeID {
     // Example: cluster-id/config/node0/node_key.json
@@ -79,7 +81,7 @@ pub fn make_secret_connection(
     addr: SocketAddr,
     local: &NodeID,
     expected_remote_id: &str,
-) -> Result<SecretConnection<TcpStream>> {
+) -> Result<PeerConnection> {
     let timeout = Duration::from_secs(3);
 
     // 通过addr建立一个连接
@@ -93,22 +95,20 @@ pub fn make_secret_connection(
     let remote_id = connection.remote_pubkey().peer_id().to_string();
 
     ensure!(remote_id == expected_remote_id, "Unexpected peer");
-    Ok(connection)
+    Ok(BufReader::with_capacity(DATA_MAX_SIZE, connection))
 }
 
 pub fn send_local_node_info(
-    connection: &mut SecretConnection<TcpStream>,
+    connection: &mut PeerConnection,
     local_info: &DefaultNodeInfo,
 ) -> Result<()> {
     let bytes = local_info.encode_length_delimited_to_vec(); // 编码为长度+内容
-    connection.write_all(&bytes)?;
-    connection.flush()?;
+    connection.get_mut().write_all(&bytes)?;
+    connection.get_mut().flush()?;
     Ok(())
 }
 
-pub fn receive_remote_node_info(
-    connection: &mut SecretConnection<TcpStream>,
-) -> Result<DefaultNodeInfo> {
+pub fn receive_remote_node_info(connection: &mut PeerConnection) -> Result<DefaultNodeInfo> {
     const max_bytes: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/node_info.go#L16
 
     // 对方发来一个长度加一个内容，但是这个长度的数据是varint，可变长度整数，不一定是一个字节，所以需要一个一个读
@@ -139,7 +139,7 @@ pub fn receive_remote_node_info(
 
 // 有了connection之后，需要把自己的nodeinfo传送过去，对方检查兼容性等
 pub fn exchanged_node_info(
-    connection: &mut SecretConnection<TcpStream>,
+    connection: &mut PeerConnection,
     local_info: &DefaultNodeInfo,
 ) -> Result<DefaultNodeInfo> {
     // 将自己的nodeinfo发给对方，并接收对方发来的nodeinfo，返回对方的nodeinfo

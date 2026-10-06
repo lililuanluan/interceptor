@@ -41,8 +41,12 @@ async fn main() -> Result<()> {
 
     let node0 = MyNode::new(&docker, &run_paths.testnet_config_dir.join("node0"), &image).await?;
     let node1 = MyNode::new(&docker, &run_paths.testnet_config_dir.join("node1"), &image).await?;
-    node0.connect(&node1);
+    let connection = node0.connect(&node1).await?;
+
+    println!(
+        "SecretConnection + NodeInfo exchange OK, remote ID: {}",
+        connection.get_ref().remote_pubkey().peer_id()
+    );
 
     Ok(())
-
 }
