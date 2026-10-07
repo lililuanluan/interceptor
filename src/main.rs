@@ -1,16 +1,11 @@
 use anyhow::{Context, Result, ensure};
-use bollard::{
-    Docker,
-    plugin::{ContainerInspectResponse, Node},
-};
-use interceptor::node::Node as MyNode;
-use interceptor::testnet;
+use bollard::Docker;
 use interceptor::{configs::Config as AppConfig, p2p::receive_packet};
 use interceptor::{docker::ensure_docker, p2p::connect_as};
-use std::net::TcpStream;
+use interceptor::{message::MessageRebuilder, node::Node as MyNode};
+use interceptor::{p2p::send_packet, testnet};
 
-use tendermint_p2p::{secret_connection::SecretConnection, transport::Connection};
-use tendermint_proto::p2p::DefaultNodeInfo;
+use tendermint_proto::p2p::{Packet, PacketMsg, PacketPing, PacketPong, packet::Sum};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -48,8 +43,35 @@ async fn main() -> Result<()> {
         connection.get_ref().remote_pubkey().peer_id()
     );
 
-    let packet = receive_packet(&mut connection)?;
-    println!("received new packet: {:?}", packet);
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut rebuilder = MessageRebuilder::new();
+
+        loop {
+            let packet = receive_packet(&mut connection)?;
+            match packet.sum.context("packet has no payload")? {
+                Sum::PacketMsg(fragment) => {
+                    if let Some(message) = rebuilder.handle_packet(fragment)? {
+                        println!(
+                            "Complete message: channel={:#x}, bytes={}, packets={}",
+                            message.channel_id,
+                            message.data.len(),
+                            message.packet_count,
+                        );
+                    }
+                }
+
+                Sum::PacketPing(_) => {
+                    let pong = Packet {
+                        sum: Some(Sum::PacketPong(PacketPong {})),
+                    };
+                    send_packet(&mut connection, &pong)?;
+                }
+
+                Sum::PacketPong(_) => {}
+            }
+        }
+    })
+    .await??;
 
     node0.stop(&docker).await?;
     node0.remove(&docker).await?;

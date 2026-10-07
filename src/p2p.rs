@@ -80,17 +80,10 @@ impl NodeID {
 // - 对方持有正确的公钥（如果对方提供自己的公私钥，但不是配置中的那把公钥也不行）
 // -  对方有这把正确公钥对应的私钥
 pub fn make_secret_connection(
-    addr: SocketAddr,
+    stream: TcpStream,
     local: &NodeID,
     expected_remote_id: &str,
 ) -> Result<PeerConnection> {
-    let timeout = Duration::from_secs(3);
-
-    // 通过addr建立一个连接
-    let stream = TcpStream::connect_timeout(&addr, timeout)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-
     // 建立加密连接
     let connection = SecretConnection::new(stream, local.priv_key.clone(), Version::V0_34)?; // 向对方证明自己身份和验证对方身份，建立加密连接
 
@@ -141,8 +134,8 @@ where
 }
 
 pub fn receive_remote_node_info(connection: &mut PeerConnection) -> Result<DefaultNodeInfo> {
-    const max_bytes: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/node_info.go#L16
-    receive_message::<DefaultNodeInfo>(connection, max_bytes)
+    const MAX_BYTES: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/node_info.go#L16
+    receive_message::<DefaultNodeInfo>(connection, MAX_BYTES)
 }
 
 // 有了connection之后，需要把自己的nodeinfo传送过去，对方检查兼容性等
@@ -156,11 +149,21 @@ pub fn exchanged_node_info(
 }
 
 // 接受一个消息packet
-pub fn receive_packet(connection: &mut PeerConnection) -> Result<tendermint_proto::p2p::Packet> {
+pub fn receive_packet(connection: &mut PeerConnection) -> Result<Packet> {
     // 和之前的类似
-    const max_bytes: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/conn/connection.go#L660
-    receive_message::<Packet>(connection, max_bytes)
+    const MAX_BYTES: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/conn/connection.go#L660
+    receive_message::<Packet>(connection, MAX_BYTES)
 }
+
+// 发送一个packet
+pub fn send_packet(connection: &mut PeerConnection, packet: &Packet) -> Result<()> {
+    let bytes = packet.encode_length_delimited_to_vec();
+    connection.get_mut().write_all(&bytes)?;
+    connection.get_mut().flush()?;
+    Ok(())
+}
+
+// Packet有三种值（enum）：Msg，Ping，Pong，其中PacketMsg是消息分片
 
 // 注意！这里是用node0的身份信息与node1建立连接，建立的是 interceptor-node1之间的双向连接，而并不是 node0-node1之间的！！
 // 所以图像是，没有interceptor时建立的是全连接图，有interceptor时建立的是所有节点和中心的interceptor建立多条连接（分别代表不同的对方节点）
@@ -170,14 +173,24 @@ pub async fn connect_as(as_node: &Node, remote: &Node) -> Result<PeerConnection>
     let my_identity = as_node.identity.clone();
     let my_info = as_node.node_info.clone();
     tokio::task::spawn_blocking(move || {
-        // 等待网络和握手会阻塞线程
-        let mut connection = make_secret_connection(other_addr, &my_identity, &expect_other_id)?;
+        // 创建TcpStream，握手的时候设置读写超时（每次对stream的读/写最多等3秒），在退出时将超时取消
+        let timeout = Duration::from_secs(3);
+        let stream = TcpStream::connect_timeout(&other_addr, timeout)?; // 建立tcp连接timeout
+        // 读取/写入的timeout，例如如果对方一直不发nodeinfo
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
+
+        let mut connection =
+            make_secret_connection(stream.try_clone()?, &my_identity, &expect_other_id)?;
 
         let other_info = exchanged_node_info(&mut connection, &my_info)?;
         ensure!(
             other_info.default_node_id == expect_other_id,
             "NodeInfo ID does not match authenticated peer"
         );
+        // 通过原来的句柄修改同一个 socket 的设置。
+        stream.set_read_timeout(None)?;
+        stream.set_write_timeout(None)?;
         Ok::<_, anyhow::Error>(connection)
     })
     .await?
