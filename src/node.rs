@@ -33,6 +33,16 @@ pub struct Node {
 }
 
 impl Node {
+    pub async fn stop(&self, docker: &Docker) -> Result<()> {
+        docker.stop_container(&self.container_id, None).await?;
+        Ok(())
+    }
+
+    pub async fn remove(&self, docker: &Docker) -> Result<()> {
+        docker.remove_container(&self.container_id, None).await?;
+        Ok(())
+    }
+
     pub async fn new(docker: &Docker, config_dir: &Path, image: &str) -> Result<Self> {
         let container_id = start_node(docker, config_dir, image).await?;
         let node_id = NodeID::load(&config_dir.join("node_key.json"))?;

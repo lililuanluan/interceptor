@@ -20,7 +20,7 @@ pub struct NodeID {
 }
 
 use tendermint_p2p::secret_connection::{DATA_MAX_SIZE, SecretConnection, Version};
-use tendermint_proto::p2p::DefaultNodeInfo;
+use tendermint_proto::p2p::{DefaultNodeInfo, Packet};
 
 pub type PeerConnection = BufReader<SecretConnection<TcpStream>>;
 
@@ -108,9 +108,10 @@ pub fn send_local_node_info(
     Ok(())
 }
 
-pub fn receive_remote_node_info(connection: &mut PeerConnection) -> Result<DefaultNodeInfo> {
-    const max_bytes: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/node_info.go#L16
-
+fn receive_message<T>(connection: &mut PeerConnection, max_bytes: usize) -> Result<T>
+where
+    T: Message + Default,
+{
     // 对方发来一个长度加一个内容，但是这个长度的数据是varint，可变长度整数，不一定是一个字节，所以需要一个一个读
     // 那么如何知道后面还有没有字节呢？varint规定，每个字节的最高位标识后面是否还有字节，这一位不参与计算
     // 这个varint的长度数据最多10个字节
@@ -134,7 +135,12 @@ pub fn receive_remote_node_info(connection: &mut PeerConnection) -> Result<Defau
 
     connection.read_exact(&mut buffer)?;
 
-    Ok(DefaultNodeInfo::decode(&buffer[..len])?)
+    Ok(T::decode(&buffer[..len])?)
+}
+
+pub fn receive_remote_node_info(connection: &mut PeerConnection) -> Result<DefaultNodeInfo> {
+    const max_bytes: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/node_info.go#L16
+    receive_message::<DefaultNodeInfo>(connection, max_bytes)
 }
 
 // 有了connection之后，需要把自己的nodeinfo传送过去，对方检查兼容性等
@@ -145,4 +151,11 @@ pub fn exchanged_node_info(
     // 将自己的nodeinfo发给对方，并接收对方发来的nodeinfo，返回对方的nodeinfo
     send_local_node_info(connection, local_info)?;
     receive_remote_node_info(connection)
+}
+
+// 接受一个消息packet
+pub fn receive_packet(connection: &mut PeerConnection) -> Result<tendermint_proto::p2p::Packet> {
+    // 和之前的类似
+    const max_bytes: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/conn/connection.go#L660
+    receive_message::<Packet>(connection, max_bytes)
 }
