@@ -22,6 +22,8 @@ pub struct NodeID {
 use tendermint_p2p::secret_connection::{DATA_MAX_SIZE, SecretConnection, Version};
 use tendermint_proto::p2p::{DefaultNodeInfo, Packet};
 
+use crate::node::Node;
+
 pub type PeerConnection = BufReader<SecretConnection<TcpStream>>;
 
 impl NodeID {
@@ -158,4 +160,25 @@ pub fn receive_packet(connection: &mut PeerConnection) -> Result<tendermint_prot
     // 和之前的类似
     const max_bytes: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/conn/connection.go#L660
     receive_message::<Packet>(connection, max_bytes)
+}
+
+// 注意！这里是用node0的身份信息与node1建立连接，建立的是 interceptor-node1之间的双向连接，而并不是 node0-node1之间的！！
+// 所以图像是，没有interceptor时建立的是全连接图，有interceptor时建立的是所有节点和中心的interceptor建立多条连接（分别代表不同的对方节点）
+pub async fn connect_as(as_node: &Node, remote: &Node) -> Result<PeerConnection> {
+    let other_addr = remote.p2p_addr;
+    let expect_other_id = remote.identity.id.clone();
+    let my_identity = as_node.identity.clone();
+    let my_info = as_node.node_info.clone();
+    tokio::task::spawn_blocking(move || {
+        // 等待网络和握手会阻塞线程
+        let mut connection = make_secret_connection(other_addr, &my_identity, &expect_other_id)?;
+
+        let other_info = exchanged_node_info(&mut connection, &my_info)?;
+        ensure!(
+            other_info.default_node_id == expect_other_id,
+            "NodeInfo ID does not match authenticated peer"
+        );
+        Ok::<_, anyhow::Error>(connection)
+    })
+    .await?
 }

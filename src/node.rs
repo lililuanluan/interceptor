@@ -6,10 +6,8 @@ use bollard::models::ContainerInspectResponse;
 use bollard::{
     Docker,
     models::{ContainerCreateBody, HostConfig, PortBinding},
-    plugin::ContainerCreateResponse,
 };
 use serde_json::Value;
-use std::net::TcpStream;
 use std::time::Duration;
 use std::{
     collections::HashMap,
@@ -17,7 +15,6 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
 };
-use tendermint_p2p::secret_connection::SecretConnection;
 use tendermint_proto::p2p::{DefaultNodeInfo, DefaultNodeInfoOther, ProtocolVersion};
 
 pub struct Node {
@@ -91,26 +88,6 @@ impl Node {
             rpc_url: rpc_url,
             p2p_addr: addr,
         })
-    }
-
-    pub async fn connect(&self, other: &Self) -> Result<PeerConnection> {
-        let other_addr = other.p2p_addr;
-        let expect_other_id = other.identity.id.clone();
-        let my_identity = self.identity.clone();
-        let my_info = self.node_info.clone();
-        tokio::task::spawn_blocking(move || {
-            // 等待网络和握手会阻塞线程
-            let mut connection =
-                make_secret_connection(other_addr, &my_identity, &expect_other_id)?;
-
-            let other_info = exchanged_node_info(&mut connection, &my_info)?;
-            ensure!(
-                other_info.default_node_id == expect_other_id,
-                "NodeInfo ID does not match authenticated peer"
-            );
-            Ok::<_, anyhow::Error>(connection)
-        })
-        .await?
     }
 }
 

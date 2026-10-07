@@ -3,10 +3,10 @@ use bollard::{
     Docker,
     plugin::{ContainerInspectResponse, Node},
 };
-use interceptor::docker::ensure_docker;
 use interceptor::node::Node as MyNode;
 use interceptor::testnet;
 use interceptor::{configs::Config as AppConfig, p2p::receive_packet};
+use interceptor::{docker::ensure_docker, p2p::connect_as};
 use std::net::TcpStream;
 
 use tendermint_p2p::{secret_connection::SecretConnection, transport::Connection};
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 
     let node0 = MyNode::new(&docker, &run_paths.testnet_config_dir.join("node0"), &image).await?;
     let node1 = MyNode::new(&docker, &run_paths.testnet_config_dir.join("node1"), &image).await?;
-    let mut connection = node0.connect(&node1).await?;
+    let mut connection = connect_as(&node0, &node1).await?;
 
     println!(
         "SecretConnection + NodeInfo exchange OK, remote ID: {}",
