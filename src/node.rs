@@ -1,4 +1,5 @@
 use crate::p2p::{NodeID, PeerConnection, exchanged_node_info, make_secret_connection};
+use crate::resource_manager::ResourceManager;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::ensure;
@@ -40,8 +41,13 @@ impl Node {
         Ok(())
     }
 
-    pub async fn new(docker: &Docker, config_dir: &Path, image: &str) -> Result<Self> {
-        let container_id = start_node(docker, config_dir, image).await?;
+    pub async fn new(
+        docker: &Docker,
+        config_dir: &Path,
+        image: &str,
+        rm: &mut ResourceManager,
+    ) -> Result<Self> {
+        let container_id = start_node(docker, config_dir, image, rm).await?;
         let node_id = NodeID::load(&config_dir.join("node_key.json"))?;
         let container_inspect: ContainerInspectResponse = docker
             .inspect_container(&container_id, None)
@@ -92,7 +98,12 @@ impl Node {
 }
 
 // 启动一个节点容器
-pub async fn start_node(docker: &Docker, config_dir: &Path, image: &str) -> Result<String> {
+pub async fn start_node(
+    docker: &Docker,
+    config_dir: &Path,
+    image: &str,
+    rm: &mut ResourceManager,
+) -> Result<String> {
     let script = fs::read_to_string("scripts/start-node.sh")?;
     let config_dir = fs::canonicalize(config_dir)?;
 
@@ -142,6 +153,7 @@ pub async fn start_node(docker: &Docker, config_dir: &Path, image: &str) -> Resu
 
     let container = docker.create_container(None, body).await?;
     let id = container.id;
+    rm.register_container(id.clone());
 
     println!("Node container: {id}");
     docker.start_container(&id, None).await?;

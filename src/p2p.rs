@@ -22,7 +22,7 @@ pub struct NodeID {
 use tendermint_p2p::secret_connection::{DATA_MAX_SIZE, SecretConnection, Version};
 use tendermint_proto::p2p::{DefaultNodeInfo, Packet};
 
-use crate::node::Node;
+use crate::{node::Node, resource_manager::ResourceManager};
 
 pub type PeerConnection = BufReader<SecretConnection<TcpStream>>;
 
@@ -167,12 +167,16 @@ pub fn send_packet(connection: &mut PeerConnection, packet: &Packet) -> Result<(
 
 // 注意！这里是用node0的身份信息与node1建立连接，建立的是 interceptor-node1之间的双向连接，而并不是 node0-node1之间的！！
 // 所以图像是，没有interceptor时建立的是全连接图，有interceptor时建立的是所有节点和中心的interceptor建立多条连接（分别代表不同的对方节点）
-pub async fn connect_as(as_node: &Node, remote: &Node) -> Result<PeerConnection> {
+pub async fn connect_as(
+    as_node: &Node,
+    remote: &Node,
+    rm: &mut ResourceManager,
+) -> Result<PeerConnection> {
     let other_addr = remote.p2p_addr;
     let expect_other_id = remote.identity.id.clone();
     let my_identity = as_node.identity.clone();
     let my_info = as_node.node_info.clone();
-    tokio::task::spawn_blocking(move || {
+    let (connection, shutdown_handle) = tokio::task::spawn_blocking(move || {
         // 创建TcpStream，握手的时候设置读写超时（每次对stream的读/写最多等3秒），在退出时将超时取消
         let timeout = Duration::from_secs(3);
         let stream = TcpStream::connect_timeout(&other_addr, timeout)?; // 建立tcp连接timeout
@@ -191,7 +195,9 @@ pub async fn connect_as(as_node: &Node, remote: &Node) -> Result<PeerConnection>
         // 通过原来的句柄修改同一个 socket 的设置。
         stream.set_read_timeout(None)?;
         stream.set_write_timeout(None)?;
-        Ok::<_, anyhow::Error>(connection)
+        Ok::<_, anyhow::Error>((connection, stream))
     })
-    .await?
+    .await??;
+    rm.register_socket(shutdown_handle);
+    Ok(connection)
 }
