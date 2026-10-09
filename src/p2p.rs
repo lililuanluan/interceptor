@@ -9,6 +9,7 @@ use std::{
     io::{BufReader, Read, Write},
     net::{SocketAddr, TcpStream},
     path::Path,
+    ptr::read,
     time::Duration,
 };
 use tendermint_proto::p2p::packet::Sum;
@@ -25,6 +26,21 @@ use tendermint_proto::p2p::{DefaultNodeInfo, Packet};
 use crate::{message::CompleteMessage, node::Node, resource_manager::ResourceManager};
 
 pub type PeerConnection = BufReader<SecretConnection<TcpStream>>;
+
+// SecretConnection 是双向的，但是我目前是阻塞读取，这样会让p0->p1的读取阻塞对p1->p0消息的转发
+// 这里将其拆分为读端和写端，可以独立管理所有权等
+pub fn split_connection(
+    connection: PeerConnection, // 这里获取所有权
+) -> Result<(impl Read + Send, impl Write + Send)> {
+    // Read可以使用read_exact()等，Write可以使用wirte_all()
+    // 尚未处理的缓冲数据，BufReader 可能一次读取了比你当前需要的更多的数据。例如，你只想读取 NodeInfo，但它可能顺便读入了后面的部分 Packet
+    let buffered = connection.buffer().to_vec();
+    let (writer, reader) = connection.into_inner().split()?; // 两个句柄，但是公用一个tcp连接
+    // 把旧缓冲接到新的reader的签名
+    let reader =
+        std::io::Cursor::new(buffered).chain(BufReader::with_capacity(DATA_MAX_SIZE, reader));
+    Ok((reader, writer))
+}
 
 impl NodeID {
     // Example: cluster-id/config/node0/node_key.json
@@ -103,7 +119,7 @@ pub fn send_local_node_info(
     Ok(())
 }
 
-fn receive_message<T>(connection: &mut PeerConnection, max_bytes: usize) -> Result<T>
+fn receive_message<T>(connection: &mut impl Read, max_bytes: usize) -> Result<T>
 where
     T: Message + Default,
 {
@@ -149,24 +165,21 @@ pub fn exchanged_node_info(
 }
 
 // 接受一个消息packet
-pub fn receive_packet(connection: &mut PeerConnection) -> Result<Packet> {
+pub fn receive_packet(connection: &mut impl Read) -> Result<Packet> {
     // 和之前的类似
     const MAX_BYTES: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/conn/connection.go#L660
     receive_message::<Packet>(connection, MAX_BYTES)
 }
 
 // 发送一个packet
-pub fn send_packet(connection: &mut PeerConnection, packet: &Packet) -> Result<()> {
+pub fn send_packet(connection: &mut impl Write, packet: &Packet) -> Result<()> {
     let bytes = packet.encode_length_delimited_to_vec();
-    connection.get_mut().write_all(&bytes)?;
-    connection.get_mut().flush()?;
+    connection.write_all(&bytes)?;
+    connection.flush()?;
     Ok(())
 }
 
-pub fn send_complete_message(
-    connection: &mut PeerConnection,
-    message: &CompleteMessage,
-) -> Result<()> {
+pub fn send_complete_message(connection: &mut impl Write, message: &CompleteMessage) -> Result<()> {
     for p in message.to_packets()? {
         let packet = Packet {
             sum: Some(Sum::PacketMsg(p)),
