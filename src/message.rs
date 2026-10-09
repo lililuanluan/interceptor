@@ -23,12 +23,44 @@ pub struct CompleteMessage {
     pub packet_count: usize,
 }
 
+impl CompleteMessage {
+    pub fn to_packets(&self) -> Result<Vec<PacketMsg>> {
+        ensure!(
+            (0..=255).contains(&self.channel_id),
+            "Invalid channel id: {}",
+            self.channel_id
+        );
+
+        if self.data.is_empty() {
+            return Ok(vec![PacketMsg {
+                channel_id: self.channel_id.clone(),
+                eof: true,
+                data: Vec::new(),
+            }]);
+        }
+
+        let mut packets = Vec::new();
+        const MAX_PAYLOAD: usize = 1024;
+
+        let mut chunks = self.data.chunks(MAX_PAYLOAD).peekable(); // 创建一个可以查看但不消耗的迭代器
+
+        while let Some(chunk) = chunks.next() {
+            packets.push(PacketMsg {
+                channel_id: self.channel_id,
+                eof: chunks.peek().is_none(),
+                data: chunk.to_vec(),
+            })
+        }
+        Ok(packets)
+    }
+}
+
 #[derive(Debug, Default)]
-pub struct MessageRebuilder {
+pub struct MessageBuilder {
     channels: HashMap<i32, PartialMessage>, // 每个channel维护一个正在重组的消息
 }
 
-impl MessageRebuilder {
+impl MessageBuilder {
     pub fn new() -> Self {
         Self {
             channels: HashMap::new(),

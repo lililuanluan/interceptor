@@ -4,7 +4,7 @@ use interceptor::docker::ensure_docker;
 use interceptor::p2p::connect_as;
 use interceptor::resource_manager::{self, ResourceManager};
 use interceptor::{configs::Config as AppConfig, p2p::receive_packet};
-use interceptor::{message::MessageRebuilder, node::Node as MyNode};
+use interceptor::{message::MessageBuilder, node::Node as MyNode};
 use interceptor::{p2p::send_packet, testnet};
 
 use tendermint_proto::p2p::{Packet, PacketMsg, PacketPing, PacketPong, packet::Sum};
@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
 
         // 这是一个blocking的后台任务，需要保存句柄以等待它结束
         interceptor_task = Some(tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut rebuilder = MessageRebuilder::new();
+            let mut rebuilder = MessageBuilder::new();
 
             loop {
                 let packet = receive_packet(&mut connection)?;
@@ -90,6 +90,8 @@ async fn main() -> Result<()> {
                         }
                     }
 
+                    // ping pong消息是连接层用来检查对方是否响应，不是共识消息
+                    // 如果对方超时没有回复pong，则cometbft会关闭连接
                     Sum::PacketPing(_) => {
                         let pong = Packet {
                             sum: Some(Sum::PacketPong(PacketPong {})),

@@ -1,3 +1,9 @@
+use anyhow::{Context, Result, ensure};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use ed25519_consensus::SigningKey;
+use prost::Message;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{BufReader, Read, Write},
@@ -5,13 +11,7 @@ use std::{
     path::Path,
     time::Duration,
 };
-
-use anyhow::{Context, Result, ensure};
-use base64::{Engine, engine::general_purpose::STANDARD};
-use ed25519_consensus::SigningKey;
-use prost::Message;
-use serde_json::Value;
-use sha2::{Digest, Sha256};
+use tendermint_proto::p2p::packet::Sum;
 
 #[derive(Debug, Clone)]
 pub struct NodeID {
@@ -22,7 +22,7 @@ pub struct NodeID {
 use tendermint_p2p::secret_connection::{DATA_MAX_SIZE, SecretConnection, Version};
 use tendermint_proto::p2p::{DefaultNodeInfo, Packet};
 
-use crate::{node::Node, resource_manager::ResourceManager};
+use crate::{message::CompleteMessage, node::Node, resource_manager::ResourceManager};
 
 pub type PeerConnection = BufReader<SecretConnection<TcpStream>>;
 
@@ -160,6 +160,19 @@ pub fn send_packet(connection: &mut PeerConnection, packet: &Packet) -> Result<(
     let bytes = packet.encode_length_delimited_to_vec();
     connection.get_mut().write_all(&bytes)?;
     connection.get_mut().flush()?;
+    Ok(())
+}
+
+pub fn send_complete_message(
+    connection: &mut PeerConnection,
+    message: &CompleteMessage,
+) -> Result<()> {
+    for p in message.to_packets()? {
+        let packet = Packet {
+            sum: Some(Sum::PacketMsg(p)),
+        };
+        send_packet(connection, &packet)?;
+    }
     Ok(())
 }
 
