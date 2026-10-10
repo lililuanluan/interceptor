@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, ensure};
 use bollard::Docker;
+use bollard::network;
 use interceptor::docker::ensure_docker;
+use interceptor::network::Network;
 use interceptor::p2p::connect_as;
 use interceptor::p2p::send_complete_message;
 use interceptor::p2p::split_connection;
@@ -51,70 +53,35 @@ async fn main() -> Result<()> {
     // /tmp/cluster-id/config/node[0-4]/
     // config.toml  genesis.json  node_key.json  priv_validator_key.json
 
-    let mut interceptor_tasks = JoinSet::new();
-
-    let mut run_result: Result<()> = async {
-        let node0 = MyNode::new(
+    let mut nodes = Vec::new();
+    for i in 0..config.num_nodes {
+        let node = match MyNode::new(
             &docker,
-            &run_paths.testnet_config_dir.join("node0"),
+            &run_paths.testnet_config_dir.join(format!("node{i}")),
             &image,
             &mut rm,
         )
-        .await?;
-        let node1 = MyNode::new(
-            &docker,
-            &run_paths.testnet_config_dir.join("node1"),
-            &image,
-            &mut rm,
-        )
-        .await?;
-
-        let connection_with_1 = connect_as(&node0, &node1, &mut rm).await?;
-        let (reader1, writer1) = split_connection(connection_with_1)?;
-        let connection_with_0 = connect_as(&node1, &node0, &mut rm).await?;
-        let (reader0, writer0) = split_connection(connection_with_0)?;
-
-
-        // 创建多个blocking任务，将句柄保存起来，后面可以等待它们结束
-        for (mut reader, mut writer, direction) in
-            [(reader0, writer1, "0->1"), (reader1, writer0, "1->0")]
+        .await
         {
-            interceptor_tasks.spawn_blocking(move || -> Result<()> {
-                let mut message_builder = MessageBuilder::new();
-
-                loop {
-                    let packet = receive_packet(&mut reader)?;
-
-                    match packet.sum.context("packet has no payload")? {
-                        Sum::PacketMsg(fragment) => {
-                            if let Some(message) = message_builder.handle_packet(fragment)? {
-                                // 转发给对应的writer
-                                send_complete_message(&mut writer, &message)?;
-
-                                println!(
-                                    "Complete message [{direction}]: channel={:#x}, bytes={}, packets={}",
-                                    message.channel_id,
-                                    message.data.len(),
-                                    message.packet_count,
-                                );
-                            }
-                        }
-                        // 剩下两个消息类型都匹配到这个分支：
-                        pingpong => {
-                            let packet = Packet {
-                                sum: Some(pingpong),
-                            };
-                            send_packet(&mut writer, &packet)?;
-                        }
-                    }
+            Ok(node) => node,
+            Err(err) => {
+                // 这里如果创建节点容器失败则清理并退出
+                if let Err(e) = rm.cleanup().await {
+                    eprintln!("cleanup failed: {e:#}");
                 }
-            });
-        }
+                return Err(err);
+            }
+        };
+        nodes.push(node);
+    }
 
+    let mut network = Network::new(nodes);
+    let mut run_result: Result<()> = async {
+        network.connect_all(&mut rm).await?;
         // interceptor正常退出，收到ctrlc，收到term，这三件事都有可能发生，这里就是询问这三个句柄哪个发生了就执行哪个
         tokio::select! {
             // interceptor_tasks是一个任务集合，哪个任务先返回就被join_next()取出
-            result = interceptor_tasks.join_next() => {
+            result = network.join_next() => {
                 let result = result.context("no interceptor task")?;
                 result??; //这里如果出错，错误信息也会传导到run_result
             }
@@ -136,7 +103,7 @@ async fn main() -> Result<()> {
     // 如果是先收到信号，interceptor_task还在跑着，这里通过执行清理socket以及容器之后，interceptor_task就会自己报错，然后就结束了
     let cleanup_result = rm.cleanup().await;
     // 等待所有interceptor任务退出
-    while let Some(result) = interceptor_tasks.join_next().await {
+    while let Some(result) = network.join_next().await {
         // 所以这里分支是通过信号杀死的
         match result {
             Ok(Ok(())) => {}

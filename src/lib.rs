@@ -2,6 +2,7 @@ pub mod configs;
 pub mod docker;
 pub mod filepath;
 pub mod message;
+pub mod network;
 pub mod node;
 pub mod p2p;
 pub mod resource_manager;
