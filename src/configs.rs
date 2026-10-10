@@ -23,6 +23,9 @@ pub struct Config {
     #[config_arg(accept_from = "cli_and_config")]
     pub cluster_id: Option<String>,
 
+    #[config_arg(accept_from = "cli_and_config")]
+    pub log_root: Option<String>,
+
     #[config_arg(default_value = "10")]
     pub max_block: u32, // run 0-max_block blocks
 }
@@ -58,7 +61,9 @@ impl Config {
             "cluster_id must contain only alphabets, numbers, - and _!"
         );
 
-        let root = PathBuf::from("/tmp");
+        let root = self.log_root.clone().unwrap_or("/tmp".to_string());
+
+        let root = PathBuf::from(root);
 
         // 如果root不存在，不要创建！直接退出
         ensure!(root.exists(), "root {:?} doesn't exist", root);
