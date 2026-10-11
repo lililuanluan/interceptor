@@ -2,13 +2,18 @@ use crate::p2p::{NodeID, PeerConnection, exchanged_node_info, make_secret_connec
 use crate::resource_manager::ResourceManager;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 use anyhow::ensure;
 use bollard::models::ContainerInspectResponse;
 use bollard::{
     Docker,
     models::{ContainerCreateBody, HostConfig, PortBinding},
 };
+use chrono::{DateTime, Utc};
+use clap::error;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use serde_json::json;
 use std::time::Duration;
 use std::{
     collections::HashMap,
@@ -17,6 +22,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tendermint_proto::p2p::{DefaultNodeInfo, DefaultNodeInfoOther, ProtocolVersion};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
 pub struct Node {
     pub identity: NodeID,
@@ -28,9 +34,18 @@ pub struct Node {
     pub p2p_addr: SocketAddr,
     pub rpc_url: String,
     pub rpc_port: u16,
+    block_subscribed: bool,
 }
 
 impl Node {
+    pub async fn subscribe_blocks(&mut self) -> Result<BlockSocket> {
+        ensure!(!self.block_subscribed, "Block subscription already created");
+        let response = subscribe_blocks(&self.rpc_port).await?;
+        self.block_subscribed = true;
+        // 这个socket所有权归block monitor
+        Ok(response)
+    }
+
     pub async fn stop(&self, docker: &Docker) -> Result<()> {
         docker.stop_container(&self.container_id, None).await?;
         Ok(())
@@ -93,8 +108,136 @@ impl Node {
             rpc_port: rpc_port,
             rpc_url: rpc_url,
             p2p_addr: addr,
+            block_subscribed: false,
         })
     }
+}
+
+struct RpcMessage {
+    pub received_at: DateTime<Utc>,
+    pub value: Value,
+}
+async fn receive_rpc_response(socket: &mut BlockSocket) -> Result<RpcMessage> {
+    // rpc不一定一次就能收到回复，还可能是pingpong消息等，也可能对端关闭了连接
+    loop {
+        let message = socket
+            .next()
+            .await
+            .context("Block websocket disconnected")??;
+
+        match message {
+            Message::Text(text) => {
+                // 收到消息后立即记录时间
+                let received_at = Utc::now();
+                let response: Value = serde_json::from_str(text.as_str())?;
+
+                if let Some(error) = response.get("error") {
+                    ensure!(error.is_null(), "WebSocket RPC error: {error}");
+                }
+                return Ok(RpcMessage {
+                    received_at,
+                    value: response,
+                });
+            }
+            Message::Ping(_) => {
+                // 当tungstenite收到ping的时候，会自动构造一个pong并排队，这里直接flush即可
+                socket.flush().await?;
+            }
+
+            Message::Close(frame) => {
+                bail!("Block websocket closed: {frame:?}");
+            }
+
+            Message::Binary(_) => {
+                bail!("Expected JSON format");
+            }
+
+            _ => {}
+        }
+    }
+}
+
+// 订阅节点的block发布流
+pub type BlockSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+pub async fn subscribe_blocks(rpc_port: &u16) -> Result<BlockSocket> {
+    // 向节点发送一个订阅请求，等待确认
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let url = format!("ws://127.0.0.1:{}/websocket", rpc_port);
+        let (mut socket, _) = connect_async(url.as_str()).await?;
+
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "subscribe",
+            "params": {
+                "query": "tm.event='NewBlock'"
+            }
+        });
+
+        socket
+            .send(Message::Text(request.to_string().into()))
+            .await?;
+
+        let response = receive_rpc_response(&mut socket).await?;
+        let response = &response.value;
+        // 期待收到这样的response：
+        /*
+                {
+                  "jsonrpc": "2.0",
+                  "id": 1,  <-- 就是前面request中的id
+                  "result": {}
+                }
+        */
+        ensure!(
+            response.get("id") == Some(&json!(1)) && response.get("result") == Some(&json!({})),
+            "Unexpected subscription response: {response}"
+        );
+        Ok(socket)
+    })
+    .await
+    .context("Block subscription timed out")?
+}
+
+// 获取一个最新发布block的订阅消息
+#[derive(Debug)]
+pub struct NewBlockEvent {
+    pub height: u64,
+    pub hash: String,
+    pub block_time: String, // block_time类似ripple的close_time，是共识的一部分
+    pub observed_at: DateTime<Utc>, // 本地接收到这个订阅消息的时间
+}
+pub async fn receive_block(socket: &mut BlockSocket) -> Result<NewBlockEvent> {
+    let RpcMessage { received_at, value } = receive_rpc_response(socket).await?;
+
+    // json::Value的get方法是直接获取一个值（option），而pointer方法是提供一个路径下去，一路追到那个对应的值（option）
+    let value = value
+        .pointer("/result/data/value")
+        .context("Missing block event value")?;
+
+    let height: u64 = value
+        .pointer("/block/header/height")
+        .and_then(Value::as_str) // 如果是Some(x)，and_then(f) 返回f(x)
+        .context("Missing block height")?
+        .parse()?;
+
+    let hash: String = value
+        .pointer("/block_id/hash")
+        .and_then(Value::as_str)
+        .context("Missing block hash")?
+        .to_string();
+
+    let block_time = value
+        .pointer("/block/header/time")
+        .and_then(Value::as_str)
+        .context("Missing block time")?
+        .to_string();
+
+    Ok(NewBlockEvent {
+        height,
+        hash,
+        block_time,
+        observed_at: received_at,
+    })
 }
 
 // 启动一个节点容器

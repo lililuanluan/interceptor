@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use anyhow::{Context, Result, ensure};
 use bollard::Docker;
 use bollard::network;
@@ -11,6 +13,7 @@ use interceptor::{configs::Config as AppConfig, p2p::receive_packet};
 use interceptor::{message::MessageBuilder, node::Node as MyNode};
 use interceptor::{p2p::send_packet, testnet};
 
+use interceptor::network::NetworkEvent;
 use tendermint_proto::p2p::{Packet, PacketMsg, PacketPing, PacketPong, packet::Sum};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
@@ -75,15 +78,23 @@ async fn main() -> Result<()> {
         nodes.push(node);
     }
 
-    let mut network = Network::new(nodes);
+    let mut network = Network::new(nodes, Instant::now());
+    let target_height = config.max_block as u64;
+
     let mut run_result: Result<()> = async {
+        network.subscribe_blocks_all(target_height).await?;
         network.connect_all(&mut rm).await?;
         // interceptor正常退出，收到ctrlc，收到term，这三件事都有可能发生，这里就是询问这三个句柄哪个发生了就执行哪个
         tokio::select! {
-            // interceptor_tasks是一个任务集合，哪个任务先返回就被join_next()取出
-            result = network.join_next() => {
-                let result = result.context("no interceptor task")?;
-                result??; //这里如果出错，错误信息也会传导到run_result
+            event = network.wait_event() => {
+                match event? {
+                    NetworkEvent::AllBlocksReached => {
+                        println!("all nodes reached block {target_height}, exiting");
+                    }
+                    NetworkEvent::InterceptorStopped => {
+                        println!("an interceptor task stopped");
+                    }
+                }
             }
             // tokio:select 任意一个分支执行，就会直接结束继续往下走
             // 这里如果收到信号，则直接退出，所以无论是正常结束还是收到信号，都会执行后面的
@@ -98,6 +109,8 @@ async fn main() -> Result<()> {
         Ok(())
     }
     .await;
+
+    network.shutdown();
 
     // 这里退出之后，可能是interceptor正常退出，也可能是收到了信号
     // 如果是先收到信号，interceptor_task还在跑着，这里通过执行清理socket以及容器之后，interceptor_task就会自己报错，然后就结束了
