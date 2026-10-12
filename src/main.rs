@@ -18,6 +18,9 @@ use tendermint_proto::p2p::{Packet, PacketMsg, PacketPing, PacketPong, packet::S
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
 
+use interceptor::block_monitor::BlockLog;
+use interceptor::logger::Logger;
+
 // timeout 默认发送SIGTERM
 // timeout -s INT 指定发送SIGINT
 // Ctrl+c 发送SIGINT
@@ -44,6 +47,8 @@ async fn main() -> Result<()> {
     let run_paths = &config.get_run_paths()?;
 
     println!("run paths: {:?}", run_paths);
+    let mut logger = Logger::new(&run_paths.test_log_dir)?;
+    let blocks_writer = logger.writer::<BlockLog>()?;
 
     testnet::init_testnet_config(
         &docker,
@@ -82,7 +87,9 @@ async fn main() -> Result<()> {
     let target_height = config.max_block as u64;
 
     let mut run_result: Result<()> = async {
-        network.subscribe_blocks_all(target_height).await?;
+        network
+            .subscribe_blocks_all(target_height, blocks_writer)
+            .await?;
         network.connect_all(&mut rm).await?;
         // interceptor正常退出，收到ctrlc，收到term，这三件事都有可能发生，这里就是询问这三个句柄哪个发生了就执行哪个
         tokio::select! {
@@ -122,7 +129,7 @@ async fn main() -> Result<()> {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
                 // 主动关闭 socket 通常会使 read_exact 返回错误。
-                eprintln!("interceptor returns on exit (expected) ：{err:#}");
+                eprintln!("interceptor returns on exit (expected): {err:#}");
             }
             Err(err) => {
                 eprintln!("interceptor task error：{err}");
@@ -133,6 +140,15 @@ async fn main() -> Result<()> {
         }
     }
 
+    // 等待所有block monitor退出（已经shutdown了，那边应该很快退出）
+    // 它们退出后将手里writer释放，这样channel就会关闭，可以让csv flush
+    if let Err(err) = network.join_block_tasks().await {
+        eprintln!("Block monitor returns on exit (expected): {err:#}");
+    }
+
+    let logger_result = logger.wait().await;
+
     run_result?;
-    cleanup_result
+    cleanup_result?;
+    logger_result
 }

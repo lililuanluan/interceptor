@@ -14,12 +14,12 @@ use clap::error;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use serde_json::json;
-use std::time::Duration;
 use std::{
     collections::HashMap,
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 use tendermint_proto::p2p::{DefaultNodeInfo, DefaultNodeInfoOther, ProtocolVersion};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
@@ -114,7 +114,8 @@ impl Node {
 }
 
 struct RpcMessage {
-    pub received_at: DateTime<Utc>,
+    pub received_at_abs: DateTime<Utc>, // 绝对时间戳
+    pub received_at_instant: Instant, // 逐条记录收到消息的时间Instant，Instant必须是两个时间点相减，而不能和绝对时间相互转换
     pub value: Value,
 }
 async fn receive_rpc_response(socket: &mut BlockSocket) -> Result<RpcMessage> {
@@ -128,14 +129,16 @@ async fn receive_rpc_response(socket: &mut BlockSocket) -> Result<RpcMessage> {
         match message {
             Message::Text(text) => {
                 // 收到消息后立即记录时间
-                let received_at = Utc::now();
+                let received_at_abs = Utc::now();
+                let received_at_instant = Instant::now();
                 let response: Value = serde_json::from_str(text.as_str())?;
 
                 if let Some(error) = response.get("error") {
                     ensure!(error.is_null(), "WebSocket RPC error: {error}");
                 }
                 return Ok(RpcMessage {
-                    received_at,
+                    received_at_abs,
+                    received_at_instant,
                     value: response,
                 });
             }
@@ -204,10 +207,15 @@ pub struct NewBlockEvent {
     pub height: u64,
     pub hash: String,
     pub block_time: String, // block_time类似ripple的close_time，是共识的一部分
-    pub observed_at: DateTime<Utc>, // 本地接收到这个订阅消息的时间
+    pub observed_at_abs: DateTime<Utc>, // 本地接收到这个订阅消息的时间
+    pub observed_at_instant: Instant,
 }
 pub async fn receive_block(socket: &mut BlockSocket) -> Result<NewBlockEvent> {
-    let RpcMessage { received_at, value } = receive_rpc_response(socket).await?;
+    let RpcMessage {
+        received_at_abs,
+        received_at_instant,
+        value,
+    } = receive_rpc_response(socket).await?;
 
     // json::Value的get方法是直接获取一个值（option），而pointer方法是提供一个路径下去，一路追到那个对应的值（option）
     let value = value
@@ -236,7 +244,8 @@ pub async fn receive_block(socket: &mut BlockSocket) -> Result<NewBlockEvent> {
         height,
         hash,
         block_time,
-        observed_at: received_at,
+        observed_at_abs: received_at_abs,
+        observed_at_instant: received_at_instant,
     })
 }
 

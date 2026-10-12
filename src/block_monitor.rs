@@ -1,10 +1,25 @@
+use crate::logger::{LogSchema, LogWriter};
+use crate::node::{BlockSocket, receive_block};
 use anyhow::{Context, Result};
 use chrono::SecondsFormat;
+use serde::Serialize;
 use std::time::Instant;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::node::{BlockSocket, receive_block};
+#[derive(Serialize)]
+pub struct BlockLog {
+    pub node: usize,
+    pub height: u64,
+    pub hash: String,
+    pub block_time: String,
+    pub observed_at: String,
+    pub elapsed_us: u128,
+}
+
+impl LogSchema for BlockLog {
+    const FILE: &'static str = "blocks.csv";
+}
 
 // 跑一个节点的block subscription的监控循环
 // TODO：这里显式提供target_height，以后应该将这部分移除，让外部控制当所有节点都到达target height之后shutdown
@@ -13,6 +28,7 @@ pub async fn run_block_height_monitor(
     mut socket: BlockSocket, // Node::subscribe_blocks返回的socket
     target_height: u64,
     started_at: Instant, // 测试的启动时间，用于计算elapsed
+    blocks_writer: LogWriter<BlockLog>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     loop {
@@ -27,18 +43,28 @@ pub async fn run_block_height_monitor(
                 result.with_context(|| format!("node {node_id}: receive block failed"))?
             }
         };
-        println!(
-            "[node {node_id}] height={} hash={} block_time={} observed_at={} elapsed_us={}",
-            block_event.height,
-            block_event.hash,
-            block_event.block_time,
-            block_event
-                .observed_at
-                .to_rfc3339_opts(SecondsFormat::Micros, true),
-            started_at.elapsed().as_micros(),
-        );
 
-        if block_event.height >= target_height {
+        let height = block_event.height;
+        let record = BlockLog {
+            node: node_id,
+            height,
+            hash: block_event.hash,
+            block_time: block_event.block_time,
+            observed_at: block_event
+                .observed_at_abs
+                .to_rfc3339_opts(SecondsFormat::Micros, true),
+            elapsed_us: block_event
+                .observed_at_instant
+                .saturating_duration_since(started_at)
+                .as_micros(),
+        };
+
+        blocks_writer
+            .log(record)
+            .await
+            .with_context(|| format!("node {node_id}: submit block record failed"))?;
+
+        if height >= target_height {
             println!("[node {node_id}] reached target height {target_height}, stop monitoring");
             return Ok(());
         }

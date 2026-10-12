@@ -26,7 +26,10 @@ pub async fn init_testnet_config(
 ) -> Result<()> {
     ensure!(num_nodes >= 4, "num nodes");
 
-    create_shared_dir(&testnet_config_dir)?;
+    create_shared_dir(&testnet_config_dir).context(format!(
+        "create testnet config dir {}",
+        testnet_config_dir.display()
+    ))?;
 
     // 使用绝对路径mount
     let output_dir = fs::canonicalize(&testnet_config_dir)?;

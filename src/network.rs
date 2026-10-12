@@ -5,6 +5,8 @@ use tendermint_proto::p2p::{Packet, packet::Sum};
 use tokio::task::JoinError;
 use tokio::task::JoinSet;
 
+use crate::block_monitor::BlockLog;
+use crate::logger::LogWriter;
 use crate::{
     block_monitor::{join_monitors, run_block_height_monitor},
     message::MessageBuilder,
@@ -49,7 +51,11 @@ impl Network {
 
     // 为每个节点订阅NewBlock事件，启动监控任务
     // 必须在connect_all之前调用，这样不会漏掉早期的区块
-    pub async fn subscribe_blocks_all(&mut self, target_height: u64) -> Result<()> {
+    pub async fn subscribe_blocks_all(
+        &mut self,
+        target_height: u64,
+        blocks_writer: LogWriter<BlockLog>,
+    ) -> Result<()> {
         for id in 0..self.nodes.len() {
             let socket = self.nodes[id]
                 .subscribe_blocks()
@@ -60,7 +66,8 @@ impl Network {
                 id,
                 socket, // move
                 target_height,
-                self.start_time.clone(),
+                self.start_time, // Instant是Copy，不用显式clone
+                blocks_writer.clone(),
                 self.shutdown.clone(),
             ));
         }
@@ -68,6 +75,12 @@ impl Network {
     }
     pub fn join_next(&mut self) -> impl Future<Output = Option<Result<Result<()>, JoinError>>> {
         return self.interceptor_tasks.join_next();
+    }
+
+    pub async fn join_block_tasks(&mut self) -> Result<()> {
+        // 等待所有block monitor结束
+        // monitor是生产者，只有它们停了，logger作为消费者才能wait()
+        join_monitors(&mut self.block_monitor_tasks, self.shutdown.clone()).await
     }
 
     pub async fn wait_event(&mut self) -> Result<NetworkEvent> {
