@@ -24,7 +24,7 @@ pub struct Network {
     pub interceptor_tasks: JoinSet<Result<()>>,
     pub block_monitor_tasks: JoinSet<Result<()>>,
     shutdown: CancellationToken, // 通知所有异步任务退出
-    start_time: Instant,
+    started_instant: Instant,
 }
 
 pub enum NetworkEvent {
@@ -33,13 +33,13 @@ pub enum NetworkEvent {
 }
 
 impl Network {
-    pub fn new(nodes: Vec<Node>, start_time: Instant) -> Self {
+    pub fn new(nodes: Vec<Node>, started_instant: Instant) -> Self {
         Self {
             nodes: nodes,
             interceptor_tasks: JoinSet::new(),
             block_monitor_tasks: JoinSet::new(),
             shutdown: CancellationToken::new(),
-            start_time,
+            started_instant,
         }
     }
 
@@ -68,7 +68,7 @@ impl Network {
                 id,
                 socket, // move
                 target_height,
-                self.start_time, // Instant是Copy，不用显式clone
+                self.started_instant, // Instant是Copy，不用显式clone
                 blocks_writer.clone(),
                 self.shutdown.clone(),
             ));
@@ -117,7 +117,7 @@ impl Network {
                     [(reader_i, writer_j, i, j), (reader_j, writer_i, j, i)]
                 {
                     // spawn_blocking是move的，不能在里面使用self.xxx，否则会把self拖进去
-                    let started_instant = self.start_time.clone();
+                    let started_instant = self.started_instant;
                     let message_writer = message_writer.clone();
                     self.interceptor_tasks
                         .spawn_blocking(move || -> Result<()> {
@@ -130,13 +130,15 @@ impl Network {
                                         if let Some(message) =
                                             message_builder.handle_packet(fragment)?
                                         {
-                                            // 拦截器收到这个消息的时刻
-                                            let received_at = Utc::now();
-                                            let received_us = started_instant.elapsed().as_micros();
+                                            // 拦截器收到这个消息最后一个分片的时刻
+                                            let intercepted_at = Utc::now();
+                                            let intercepted_us =
+                                                started_instant.elapsed().as_micros();
 
                                             // 拦截器发送这个消息的时刻
-                                            let sent_at = Utc::now();
-                                            let sent_us = started_instant.elapsed().as_micros();
+                                            let forwarded_at = Utc::now();
+                                            let forwarded_us =
+                                                started_instant.elapsed().as_micros();
                                             send_complete_message(&mut writer, &message)?;
 
                                             // 发送日志条目到mpsc
@@ -147,12 +149,12 @@ impl Network {
                                                 len: message.data.len(),
                                                 packets: message.packet_count,
                                                 sha256: sha256_hex(&message.data),
-                                                received_at: received_at
+                                                intercepted_at: intercepted_at
                                                     .to_rfc3339_opts(SecondsFormat::Micros, true),
-                                                received_elapsed_us: received_us,
-                                                sent_at: sent_at
+                                                intercepted_us,
+                                                forwarded_at: forwarded_at
                                                     .to_rfc3339_opts(SecondsFormat::Micros, true),
-                                                sent_elapsed_us: sent_us,
+                                                forwarded_us,
                                                 bytes_hex: hex::encode(&message.data),
                                             })?;
                                         }

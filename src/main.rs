@@ -19,6 +19,7 @@ use tendermint_proto::p2p::{Packet, PacketMsg, PacketPing, PacketPong, packet::S
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
 
+use chrono::Utc;
 use interceptor::block_monitor::BlockLog;
 use interceptor::logger::Logger;
 
@@ -89,7 +90,10 @@ async fn main() -> Result<()> {
     let blocks_writer = logger.writer::<BlockLog>()?;
     let message_writer = logger.writer::<MessageLog>()?;
 
-    let mut network = Network::new(nodes, Instant::now());
+    let started_at = Utc::now(); // 墙钟起点时间
+    let started_instant = Instant::now(); // 单调起点：算 _us 用
+    println!("run started at {started_at}");
+    let mut network = Network::new(nodes, started_instant);
     let target_height = config.max_block as u64;
 
     let mut run_result: Result<()> = async {

@@ -14,7 +14,7 @@ pub struct BlockLog {
     pub hash: String,
     pub block_time: String,
     pub observed_at: String,
-    pub elapsed_us: u128,
+    pub observed_us: u128,
 }
 
 impl LogSchema for BlockLog {
@@ -27,7 +27,7 @@ pub async fn run_block_height_monitor(
     node_id: usize,
     mut socket: BlockSocket, // Node::subscribe_blocks返回的socket
     target_height: u64,
-    started_at: Instant, // 测试的启动时间，用于计算elapsed
+    started_instant: Instant, // 测试的启动时间，用于计算elapsed
     blocks_writer: LogWriter<BlockLog>,
     shutdown: CancellationToken,
 ) -> Result<()> {
@@ -51,11 +51,11 @@ pub async fn run_block_height_monitor(
             hash: block_event.hash,
             block_time: block_event.block_time,
             observed_at: block_event
-                .observed_at_abs
+                .observed_at
                 .to_rfc3339_opts(SecondsFormat::Micros, true),
-            elapsed_us: block_event
-                .observed_at_instant
-                .saturating_duration_since(started_at)
+            observed_us: block_event
+                .observed_instant
+                .saturating_duration_since(started_instant)
                 .as_micros(),
         };
 
