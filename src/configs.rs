@@ -1,9 +1,9 @@
 // https://crates.io/crates/clap-config-file
 use chrono::Local;
 use clap_config_file::ClapConfigFile;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 
 use crate::filepath::create_shared_dir;
 
@@ -28,6 +28,9 @@ pub struct Config {
 
     #[config_arg(default_value = "10")]
     pub max_block: u32, // run 0-max_block blocks
+
+    #[config_arg(accept_from = "cli_and_config", default_value = "scripts")]
+    pub scripts_dir: String,
 }
 
 #[derive(Debug)]
@@ -46,6 +49,12 @@ impl RunPaths {
 }
 
 impl Config {
+    pub fn get_scripts_dir(&self) -> Result<PathBuf> {
+        let dir = fs::canonicalize(&self.scripts_dir)
+            .with_context(|| format!("scripts dir {:?} not found", self.scripts_dir))?;
+        Ok(dir)
+    }
+
     // TODO: 外部手动指定这两个路径
     pub fn get_run_paths(&self) -> Result<RunPaths> {
         let cluster_id = self

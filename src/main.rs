@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
     ensure_docker(&docker, &image, auto_pull).await?;
 
     let run_paths = &config.get_run_paths()?;
+    let scripts_dir = config.get_scripts_dir()?;
 
     println!("run paths: {:?}", run_paths);
 
@@ -54,6 +55,7 @@ async fn main() -> Result<()> {
         run_paths.testnet_config_dir.clone(),
         config.num_nodes,
         &config.docker_image,
+        &scripts_dir.join("init-testnet.sh"),
     )
     .await?;
     // 生成：
@@ -67,6 +69,7 @@ async fn main() -> Result<()> {
             &run_paths.testnet_config_dir.join(format!("node{i}")),
             &image,
             &mut rm,
+            &scripts_dir.join("start-node.sh"),
         )
         .await
         {

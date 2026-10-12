@@ -19,7 +19,7 @@ pub struct MessageLog {
     pub channel_id: i32,
     pub len: usize,     // 字节数
     pub packets: usize, // 收到的分片数
-    pub sha256: String, // 消息内容的哈希值，TODO：去掉原始的bytes，只保留哈希，然后用一个数据库做索引，这样避免广播的消息重复记录
+    pub sha256: String, // 消息内容的哈希值，TODO：去掉原始的bytes，只保留哈希，然后用一个数据库做索引，这样避免广播的消息重复记录（运行4个节点的结果，消息中90%是重复gossip）
     // pub signer: Option<String>, // 只有一部分消息有签名，这里记录原始签名者 TODO：实现extract_signer
     pub received_at: String,
     pub received_elapsed_us: u128,

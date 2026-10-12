@@ -61,8 +61,9 @@ impl Node {
         config_dir: &Path,
         image: &str,
         rm: &mut ResourceManager,
+        script: &Path,
     ) -> Result<Self> {
-        let container_id = start_node(docker, config_dir, image, rm).await?;
+        let container_id = start_node(docker, config_dir, image, rm, script).await?;
         let node_id = NodeID::load(&config_dir.join("node_key.json"))?;
         let container_inspect: ContainerInspectResponse = docker
             .inspect_container(&container_id, None)
@@ -255,8 +256,10 @@ pub async fn start_node(
     config_dir: &Path,
     image: &str,
     rm: &mut ResourceManager,
+    start_script: &Path,
 ) -> Result<String> {
-    let script = fs::read_to_string("scripts/start-node.sh")?;
+    let script = fs::read_to_string(start_script)
+        .with_context(|| format!("Failed to read script: {}", start_script.display()))?;
     let config_dir = fs::canonicalize(config_dir)?;
 
     let config_toml_path = config_dir.join("config.toml");

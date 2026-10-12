@@ -23,6 +23,7 @@ pub async fn init_testnet_config(
     testnet_config_dir: PathBuf,
     num_nodes: u32,
     image: &str,
+    init_script: &Path,
 ) -> Result<()> {
     ensure!(num_nodes >= 4, "num nodes");
 
@@ -39,10 +40,8 @@ pub async fn init_testnet_config(
     let metadata = fs::metadata(&output_dir)?;
     let user = format!("{}:{}", metadata.uid(), metadata.gid());
 
-    // TODO: 提供init script的路径到config
-    let script_path = std::path::Path::new("scripts/init-testnet.sh");
-    let script = std::fs::read_to_string(script_path)
-        .with_context(|| format!("Failed to read script: {}", script_path.display()))?;
+    let script = std::fs::read_to_string(init_script)
+        .with_context(|| format!("Failed to read script: {}", init_script.display()))?;
 
     let body = ContainerCreateBody {
         image: Some(image.to_owned()),
