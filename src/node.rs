@@ -8,14 +8,13 @@ use anyhow::{Context, Result, bail, ensure};
 use bollard::Docker;
 use bollard::models::{ContainerCreateBody, ContainerInspectResponse, HostConfig, PortBinding};
 use chrono::{DateTime, Utc};
-use clap::error;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tendermint_proto::p2p::{DefaultNodeInfo, DefaultNodeInfoOther, ProtocolVersion};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
-use crate::p2p::{NodeID, PeerConnection, exchanged_node_info, make_secret_connection};
+use crate::p2p::NodeID;
 use crate::resource_manager::ResourceManager;
 
 pub struct Node {

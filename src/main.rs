@@ -1,23 +1,17 @@
 use std::time::Instant;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use bollard::Docker;
-use bollard::network;
 use interceptor::docker::ensure_docker;
 use interceptor::message::MessageLog;
 use interceptor::network::Network;
-use interceptor::p2p::connect_as;
-use interceptor::p2p::send_complete_message;
-use interceptor::p2p::split_connection;
-use interceptor::resource_manager::{self, ResourceManager};
-use interceptor::{configs::Config as AppConfig, p2p::receive_packet};
-use interceptor::{message::MessageBuilder, node::Node as MyNode};
-use interceptor::{p2p::send_packet, testnet};
+use interceptor::resource_manager::ResourceManager;
+use interceptor::configs::Config as AppConfig;
+use interceptor::node::Node as MyNode;
+use interceptor::testnet;
 
 use interceptor::network::NetworkEvent;
-use tendermint_proto::p2p::{Packet, PacketMsg, PacketPing, PacketPong, packet::Sum};
 use tokio::signal::unix::{SignalKind, signal};
-use tokio::task::JoinSet;
 
 use chrono::Utc;
 use interceptor::block_monitor::BlockLog;

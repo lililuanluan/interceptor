@@ -1,8 +1,7 @@
 use std::fs;
 use std::io::{BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::TcpStream;
 use std::path::Path;
-use std::ptr::read;
 use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};

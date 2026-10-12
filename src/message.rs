@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use serde::Serialize;
 use tendermint_proto::p2p::PacketMsg;
 
