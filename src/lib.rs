@@ -2,6 +2,7 @@ pub mod block_monitor;
 pub mod configs;
 pub mod docker;
 pub mod filepath;
+pub mod logger;
 pub mod message;
 pub mod network;
 pub mod node;
