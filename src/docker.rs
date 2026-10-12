@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, ensure};
-use bollard::{Docker, query_parameters::CreateImageOptionsBuilder};
+use bollard::Docker;
+use bollard::query_parameters::CreateImageOptionsBuilder;
 use futures_util::TryStreamExt;
 pub async fn ensure_docker(docker: &Docker, image: &str, auto_pull: bool) -> Result<()> {
     docker.ping().await?; // 确认docker deamon可用

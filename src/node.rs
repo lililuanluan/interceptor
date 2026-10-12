@@ -1,28 +1,22 @@
-use crate::p2p::{NodeID, PeerConnection, exchanged_node_info, make_secret_connection};
-use crate::resource_manager::ResourceManager;
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::bail;
-use anyhow::ensure;
-use bollard::models::ContainerInspectResponse;
-use bollard::{
-    Docker,
-    models::{ContainerCreateBody, HostConfig, PortBinding},
-};
+use std::collections::HashMap;
+use std::fs;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, bail, ensure};
+use bollard::Docker;
+use bollard::models::{ContainerCreateBody, ContainerInspectResponse, HostConfig, PortBinding};
 use chrono::{DateTime, Utc};
 use clap::error;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::Value;
-use serde_json::json;
-use std::{
-    collections::HashMap,
-    fs,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    time::{Duration, Instant},
-};
+use serde_json::{Value, json};
 use tendermint_proto::p2p::{DefaultNodeInfo, DefaultNodeInfoOther, ProtocolVersion};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+
+use crate::p2p::{NodeID, PeerConnection, exchanged_node_info, make_secret_connection};
+use crate::resource_manager::ResourceManager;
 
 pub struct Node {
     pub identity: NodeID,
@@ -97,18 +91,18 @@ impl Node {
         let rpc_url = format!("http://127.0.0.1:{rpc_port}");
         let node_info = fetch_node_info(&rpc_url).await?;
         let node_info = parse_node_info(&node_info)?;
-        let addr = SocketAddr::from(([127, 0, 0, 1], p2p_port));
+        let p2p_addr = SocketAddr::from(([127, 0, 0, 1], p2p_port));
 
         Ok(Self {
             identity: node_id,
             config_dir: config_dir.to_path_buf(), // Path不是固定大小类型
-            container_id: container_id,
-            port_map: port_map,
-            node_info: node_info,
-            p2p_port: p2p_port,
-            rpc_port: rpc_port,
-            rpc_url: rpc_url,
-            p2p_addr: addr,
+            container_id,
+            port_map,
+            node_info,
+            p2p_port,
+            rpc_port,
+            rpc_url,
+            p2p_addr,
             block_subscribed: false,
         })
     }
@@ -343,7 +337,7 @@ pub async fn fetch_node_info(rpc_url: &str) -> Result<Value> {
 
             match result {
                 Ok(info) => return Ok(info),
-                Err(err) => {
+                Err(_) => {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }

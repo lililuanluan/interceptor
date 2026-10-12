@@ -6,11 +6,13 @@
 // channel≠消息类型，但是可以理解为“大类”：同一个用途的多个类型消息通常发在同一个channel上
 // 消息在发送时会拆成多个packet，需要从connection上接收之后，根据channel id，追加到之前的缓存中，在packet中有个efo:true/false，如果为true，说明这个packet是这条消息的最后一个包
 
-use crate::logger::LogSchema;
+use std::collections::HashMap;
+
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-use std::collections::HashMap;
 use tendermint_proto::p2p::PacketMsg;
+
+use crate::logger::LogSchema;
 
 #[derive(Serialize)]
 pub struct MessageLog {
@@ -62,7 +64,7 @@ impl CompleteMessage {
 
         if self.data.is_empty() {
             return Ok(vec![PacketMsg {
-                channel_id: self.channel_id.clone(),
+                channel_id: self.channel_id,
                 eof: true,
                 data: Vec::new(),
             }]);

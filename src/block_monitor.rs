@@ -1,11 +1,13 @@
-use crate::logger::{LogSchema, LogWriter};
-use crate::node::{BlockSocket, receive_block};
+use std::time::Instant;
+
 use anyhow::{Context, Result};
 use chrono::SecondsFormat;
 use serde::Serialize;
-use std::time::Instant;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+
+use crate::logger::{LogSchema, LogWriter};
+use crate::node::{BlockSocket, receive_block};
 
 #[derive(Serialize)]
 pub struct BlockLog {

@@ -1,17 +1,17 @@
+use std::fs;
+use std::io::{BufReader, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::path::Path;
+use std::ptr::read;
+use std::time::Duration;
+
 use anyhow::{Context, Result, ensure};
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use ed25519_consensus::SigningKey;
 use prost::Message;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    io::{BufReader, Read, Write},
-    net::{SocketAddr, TcpStream},
-    path::Path,
-    ptr::read,
-    time::Duration,
-};
 use tendermint_proto::p2p::packet::Sum;
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,9 @@ pub struct NodeID {
 use tendermint_p2p::secret_connection::{DATA_MAX_SIZE, SecretConnection, Version};
 use tendermint_proto::p2p::{DefaultNodeInfo, Packet};
 
-use crate::{message::CompleteMessage, node::Node, resource_manager::ResourceManager};
+use crate::message::CompleteMessage;
+use crate::node::Node;
+use crate::resource_manager::ResourceManager;
 
 pub type PeerConnection = BufReader<SecretConnection<TcpStream>>;
 

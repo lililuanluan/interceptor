@@ -1,17 +1,13 @@
-use std::{
-    fs,
-    io::{self, Write},
-    os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
-    path::{Path, PathBuf},
-};
+use std::fs;
+use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
-use bollard::{
-    Docker,
-    models::{ContainerCreateBody, HostConfig},
-    query_parameters::{
-        LogsOptionsBuilder, RemoveContainerOptionsBuilder, WaitContainerOptionsBuilder,
-    },
+use bollard::Docker;
+use bollard::models::{ContainerCreateBody, HostConfig};
+use bollard::query_parameters::{
+    LogsOptionsBuilder, RemoveContainerOptionsBuilder, WaitContainerOptionsBuilder,
 };
 use futures_util::TryStreamExt;
 
@@ -52,7 +48,7 @@ pub async fn init_testnet_config(
         env: Some(vec!["CMTHOME=/tmp/init-home".into()]),
         cmd: Some(vec![
             "-c".into(),
-            script.into(),
+            script,
             "testnet-init".into(), // scritp的$0
             num_nodes.to_string(), // $1
         ]),

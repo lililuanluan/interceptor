@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
 
-    let (config, used_file, format) = AppConfig::parse_info();
+    let (config, _used_file, _format) = AppConfig::parse_info();
     println!("Config: {:?}", config);
     ensure!(config.num_nodes >= 4, "num nodes must >= 4");
 
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     let mut rm = ResourceManager::new(docker.clone());
     let auto_pull = config.auto_pull_image.unwrap_or(true);
 
-    ensure_docker(&docker, &image, auto_pull).await?;
+    ensure_docker(&docker, image, auto_pull).await?;
 
     let run_paths = &config.get_run_paths()?;
     let scripts_dir = config.get_scripts_dir()?;
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
         let node = match MyNode::new(
             &docker,
             &run_paths.testnet_config_dir.join(format!("node{i}")),
-            &image,
+            image,
             &mut rm,
             &scripts_dir.join("start-node.sh"),
         )

@@ -12,7 +12,7 @@ pub struct ResourceManager {
 impl ResourceManager {
     pub fn new(docker: Docker) -> Self {
         Self {
-            docker: docker,
+            docker,
             container_ids: Vec::new(),
             sockets: Vec::new(),
         }
@@ -38,10 +38,10 @@ impl ResourceManager {
             }
         }
         for container_id in &self.container_ids {
-            if let Err(err) = self.docker.stop_container(&container_id, None).await {
+            if let Err(err) = self.docker.stop_container(container_id, None).await {
                 errors.push(format!("Stop {container_id}: {err}"));
             }
-            if let Err(err) = self.docker.remove_container(&container_id, None).await {
+            if let Err(err) = self.docker.remove_container(container_id, None).await {
                 errors.push(format!("Remove {container_id}: {err}"));
             }
         }

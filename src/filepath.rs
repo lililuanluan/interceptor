@@ -1,9 +1,7 @@
-use std::{
-    fs::{self, File, Permissions},
-    io,
-    os::unix::fs::PermissionsExt,
-    path::Path,
-};
+use std::fs::{self, File, Permissions};
+use std::io;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 /*
 默认权限：当程序创建一个文件时，会请求一个“最大”权限。在 Unix 系统上，Rust 的默认请求权限通常是：
 文件：0o666（rw-rw-rw-，所有人可读写）

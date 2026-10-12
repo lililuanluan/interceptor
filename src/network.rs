@@ -1,23 +1,20 @@
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use tendermint_proto::p2p::{Packet, packet::Sum};
-use tokio::task::JoinError;
-use tokio::task::JoinSet;
-
-use crate::block_monitor::BlockLog;
-use crate::logger::LogWriter;
-use crate::message::sha256_hex;
-use crate::message::{MessageBuilder, MessageLog};
-use crate::{
-    block_monitor::{join_monitors, run_block_height_monitor},
-    node::Node,
-    p2p::{connect_as, receive_packet, send_complete_message, send_packet, split_connection},
-    resource_manager::ResourceManager,
-};
 use chrono::{SecondsFormat, Utc};
-
+use tendermint_proto::p2p::Packet;
+use tendermint_proto::p2p::packet::Sum;
+use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
+
+use crate::block_monitor::{BlockLog, join_monitors, run_block_height_monitor};
+use crate::logger::LogWriter;
+use crate::message::{MessageBuilder, MessageLog, sha256_hex};
+use crate::node::Node;
+use crate::p2p::{
+    connect_as, receive_packet, send_complete_message, send_packet, split_connection,
+};
+use crate::resource_manager::ResourceManager;
 
 pub struct Network {
     pub nodes: Vec<Node>,
@@ -35,7 +32,7 @@ pub enum NetworkEvent {
 impl Network {
     pub fn new(nodes: Vec<Node>, started_instant: Instant) -> Self {
         Self {
-            nodes: nodes,
+            nodes,
             interceptor_tasks: JoinSet::new(),
             block_monitor_tasks: JoinSet::new(),
             shutdown: CancellationToken::new(),
@@ -76,7 +73,7 @@ impl Network {
         Ok(())
     }
     pub fn join_next(&mut self) -> impl Future<Output = Option<Result<Result<()>, JoinError>>> {
-        return self.interceptor_tasks.join_next();
+        self.interceptor_tasks.join_next()
     }
 
     pub async fn join_block_tasks(&mut self) -> Result<()> {

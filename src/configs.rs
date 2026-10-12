@@ -1,9 +1,10 @@
 // https://crates.io/crates/clap-config-file
-use chrono::Local;
-use clap_config_file::ClapConfigFile;
-use std::{fs, path::PathBuf};
+use std::fs;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, ensure};
+use chrono::Local;
+use clap_config_file::ClapConfigFile;
 
 use crate::filepath::create_shared_dir;
 
