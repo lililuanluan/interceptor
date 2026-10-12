@@ -4,6 +4,7 @@ use anyhow::{Context, Result, ensure};
 use bollard::Docker;
 use bollard::network;
 use interceptor::docker::ensure_docker;
+use interceptor::message::MessageLog;
 use interceptor::network::Network;
 use interceptor::p2p::connect_as;
 use interceptor::p2p::send_complete_message;
@@ -47,8 +48,6 @@ async fn main() -> Result<()> {
     let run_paths = &config.get_run_paths()?;
 
     println!("run paths: {:?}", run_paths);
-    let mut logger = Logger::new(&run_paths.test_log_dir)?;
-    let blocks_writer = logger.writer::<BlockLog>()?;
 
     testnet::init_testnet_config(
         &docker,
@@ -83,6 +82,10 @@ async fn main() -> Result<()> {
         nodes.push(node);
     }
 
+    let mut logger = Logger::new(&run_paths.test_log_dir)?;
+    let blocks_writer = logger.writer::<BlockLog>()?;
+    let message_writer = logger.writer::<MessageLog>()?;
+
     let mut network = Network::new(nodes, Instant::now());
     let target_height = config.max_block as u64;
 
@@ -90,7 +93,7 @@ async fn main() -> Result<()> {
         network
             .subscribe_blocks_all(target_height, blocks_writer)
             .await?;
-        network.connect_all(&mut rm).await?;
+        network.connect_all(&mut rm, message_writer).await?;
         // interceptor正常退出，收到ctrlc，收到term，这三件事都有可能发生，这里就是询问这三个句柄哪个发生了就执行哪个
         tokio::select! {
             event = network.wait_event() => {

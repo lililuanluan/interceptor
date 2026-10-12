@@ -6,9 +6,38 @@
 // channel≠消息类型，但是可以理解为“大类”：同一个用途的多个类型消息通常发在同一个channel上
 // 消息在发送时会拆成多个packet，需要从connection上接收之后，根据channel id，追加到之前的缓存中，在packet中有个efo:true/false，如果为true，说明这个packet是这条消息的最后一个包
 
+use crate::logger::LogSchema;
 use anyhow::{Context, Result, ensure};
+use serde::Serialize;
 use std::collections::HashMap;
 use tendermint_proto::p2p::PacketMsg;
+
+#[derive(Serialize)]
+pub struct MessageLog {
+    pub from: usize, // 发送方
+    pub to: usize,
+    pub channel_id: i32,
+    pub len: usize,     // 字节数
+    pub packets: usize, // 收到的分片数
+    pub sha256: String, // 消息内容的哈希值，TODO：去掉原始的bytes，只保留哈希，然后用一个数据库做索引，这样避免广播的消息重复记录
+    // pub signer: Option<String>, // 只有一部分消息有签名，这里记录原始签名者 TODO：实现extract_signer
+    pub received_at: String,
+    pub received_elapsed_us: u128,
+    pub sent_at: String, // interceptor发送这个消息的时间（注意不要搞混了）
+    pub sent_elapsed_us: u128,
+    pub bytes_hex: String, // 原始字节，hex
+}
+
+impl LogSchema for MessageLog {
+    const FILE: &'static str = "message.csv";
+}
+
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
 
 #[derive(Debug, Default)]
 struct PartialMessage {

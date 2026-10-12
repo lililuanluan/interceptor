@@ -42,6 +42,13 @@ impl<T: LogSchema> LogWriter<T> {
             .await // 队列满时这里会等待
             .map_err(|_| anyhow!("log {} has stopped", T::FILE))
     }
+
+    pub fn log_blocking(&self, record: T) -> Result<()> {
+        // 同步版本，在spawn_blocking中不能用异步的
+        self.sender
+            .blocking_send(record)
+            .map_err(|_| anyhow!("log {} has stopped", T::FILE))
+    }
 }
 
 // Logger持有所有日志的后台任务
