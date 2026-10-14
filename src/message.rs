@@ -27,7 +27,8 @@ pub struct MessageLog {
     pub intercepted_us: u128,
     pub forwarded_at: String, // interceptor发送这个消息的时间（注意不要搞混了）
     pub forwarded_us: u128,
-    pub bytes_hex: String, // 原始字节，hex
+    pub forwarded_bytes_hex: String,           // 发送的字节，hex
+    pub intercepted_bytes_hex: Option<String>, // 如果没有篡改则为None
 }
 
 impl LogSchema for MessageLog {

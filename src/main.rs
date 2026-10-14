@@ -2,20 +2,17 @@ use std::time::Instant;
 
 use anyhow::{Result, ensure};
 use bollard::Docker;
-use interceptor::docker::ensure_docker;
-use interceptor::message::MessageLog;
-use interceptor::network::Network;
-use interceptor::resource_manager::ResourceManager;
-use interceptor::configs::Config as AppConfig;
-use interceptor::node::Node as MyNode;
-use interceptor::testnet;
-
-use interceptor::network::NetworkEvent;
-use tokio::signal::unix::{SignalKind, signal};
-
 use chrono::Utc;
 use interceptor::block_monitor::BlockLog;
+use interceptor::configs::Config as AppConfig;
+use interceptor::docker::ensure_docker;
 use interceptor::logger::Logger;
+use interceptor::message::MessageLog;
+use interceptor::network::{Network, NetworkEvent};
+use interceptor::node::Node as MyNode;
+use interceptor::resource_manager::ResourceManager;
+use interceptor::testnet;
+use tokio::signal::unix::{SignalKind, signal};
 
 // timeout 默认发送SIGTERM
 // timeout -s INT 指定发送SIGINT

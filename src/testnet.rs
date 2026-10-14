@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, ensure};
 use bollard::Docker;
 use bollard::models::{ContainerCreateBody, HostConfig};
-use bollard::query_parameters::{
-    RemoveContainerOptionsBuilder, WaitContainerOptionsBuilder,
-};
+use bollard::query_parameters::{RemoveContainerOptionsBuilder, WaitContainerOptionsBuilder};
 use futures_util::TryStreamExt;
 
 use crate::filepath::*;
