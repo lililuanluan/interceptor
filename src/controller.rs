@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 
@@ -39,15 +39,16 @@ impl Controller {
         }
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<()> {
         // 现在是单输入；接 Python 后这里变成 tokio::select! 两个分支
         // （一个处理"拦到消息"，一个处理"决策回复"—— 两者之间没有任何顺序关系）
         while let Some(msg) = self.inbox.recv().await {
-            self.on_intercepted(msg);
+            self.on_intercepted(msg)?;
         }
+        Ok(())
     }
 
-    fn on_intercepted(&mut self, msg: Intercepted) {
+    fn on_intercepted(&mut self, msg: Intercepted) -> Result<()> {
         // 直接转发给forwarder
         let Intercepted {
             from,
@@ -72,8 +73,9 @@ impl Controller {
             }),
         };
 
-        if self.to_forwarder.send(ForwardItem::Message(job)).is_err() {
-            return;
-        }
+        self.to_forwarder
+            .send(ForwardItem::Message(job))
+            .context("controller cannot send: forwarder has stopped")?;
+        Ok(())
     }
 }

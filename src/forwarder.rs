@@ -63,17 +63,8 @@ impl<W: Write + Send + 'static> Forwarder<W> {
     pub fn run(&mut self) -> Result<()> {
         while let Ok(item) = self.inbox.recv() {
             match item {
-                // 这里不传递错误，一个坏掉的连接不能停掉其他方向
-                ForwardItem::PingPong { from, to, sum } => {
-                    if let Err(err) = self.send_pingpong(from, to, sum) {
-                        eprintln!("Forward pingpong {from}->{to} Failed: {err:#}");
-                    }
-                }
-                ForwardItem::Message(job) => {
-                    if let Err(err) = self.send_message(job) {
-                        eprintln!("Forward Failed: {err:#}");
-                    }
-                }
+                ForwardItem::PingPong { from, to, sum } => self.send_pingpong(from, to, sum)?,
+                ForwardItem::Message(job) => self.send_message(job)?,
             }
         }
         Ok(())

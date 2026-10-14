@@ -54,6 +54,11 @@ async fn main() -> Result<()> {
     // /tmp/cluster-id/config/node[0-4]/
     // config.toml  genesis.json  node_key.json  priv_validator_key.json
 
+    // 这三个初始化要在容器初始化之前
+    let mut logger = Logger::new(&run_paths.test_log_dir)?;
+    let blocks_writer = logger.writer::<BlockLog>()?;
+    let message_writer = logger.writer::<MessageLog>()?;
+
     let mut nodes = Vec::new();
     for i in 0..config.num_nodes {
         let node = match MyNode::new(
@@ -76,10 +81,6 @@ async fn main() -> Result<()> {
         };
         nodes.push(node);
     }
-
-    let mut logger = Logger::new(&run_paths.test_log_dir)?;
-    let blocks_writer = logger.writer::<BlockLog>()?;
-    let message_writer = logger.writer::<MessageLog>()?;
 
     let started_at = Utc::now(); // 墙钟起点时间
     let started_instant = Instant::now(); // 单调起点：算 _us 用
