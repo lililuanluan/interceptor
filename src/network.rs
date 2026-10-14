@@ -205,8 +205,7 @@ impl Network {
 
         self.interceptor_tasks.spawn(async move {
             let mut controller = Controller::new(controller_rx, forwarder_tx);
-            controller.run().await;
-            Ok(())
+            controller.run().await
         });
 
         Ok(())
