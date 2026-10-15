@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
 
@@ -37,7 +37,6 @@ fn run_intercept_task<R: Read + Send + 'static>(
     mut reader: R,
     from: usize,
     to: usize,
-    started_instant: Instant,
     to_controller: mpsc::UnboundedSender<Intercepted>,
     to_forwarder: Sender<ForwardItem>,
 ) -> Result<()> {
@@ -77,7 +76,6 @@ fn run_intercept_task<R: Read + Send + 'static>(
             }
         }
     }
-    Ok(())
 }
 impl Network {
     pub fn new(nodes: Vec<Node>, started_instant: Instant) -> Self {
@@ -174,7 +172,6 @@ impl Network {
                     [(reader_i, writer_j, i, j), (reader_j, writer_i, j, i)]
                 {
                     // spawn_blocking是move的，不能在里面使用self.xxx，否则会把self拖进去
-                    let started_instant = self.started_instant;
                     let controller_tx = controller_tx.clone();
                     let forwarder_tx = forwarder_tx.clone();
 
@@ -182,14 +179,7 @@ impl Network {
                     writers.insert((from, to), writer);
 
                     self.interceptor_tasks.spawn_blocking(move || {
-                        run_intercept_task(
-                            reader,
-                            from,
-                            to,
-                            started_instant,
-                            controller_tx,
-                            forwarder_tx,
-                        )
+                        run_intercept_task(reader, from, to, controller_tx, forwarder_tx)
                     });
                 }
             }

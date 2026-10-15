@@ -120,7 +120,7 @@ pub fn send_local_node_info(
     Ok(())
 }
 
-fn receive_message<T>(connection: &mut impl Read, max_bytes: usize) -> Result<T>
+fn receive_message<T>(reader: &mut impl Read, max_bytes: usize) -> Result<T>
 where
     T: Message + Default,
 {
@@ -132,7 +132,7 @@ where
 
     for i in 0..prefix.len() {
         // 读取一个字节
-        connection.read_exact(&mut prefix[i..(i + 1)])?; // read_exact输入buffer多大就读多少字节
+        reader.read_exact(&mut prefix[i..(i + 1)])?; // read_exact输入buffer多大就读多少字节
 
         let hi_bit = prefix[i] & 0x80;
         if hi_bit == 0 {
@@ -145,7 +145,7 @@ where
 
     let mut buffer = vec![0u8; len];
 
-    connection.read_exact(&mut buffer)?;
+    reader.read_exact(&mut buffer)?;
 
     Ok(T::decode(&buffer[..len])?)
 }
@@ -166,26 +166,26 @@ pub fn exchanged_node_info(
 }
 
 // 接受一个消息packet
-pub fn receive_packet(connection: &mut impl Read) -> Result<Packet> {
+pub fn receive_packet(reader: &mut impl Read) -> Result<Packet> {
     // 和之前的类似
     const MAX_BYTES: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/conn/connection.go#L660
-    receive_message::<Packet>(connection, MAX_BYTES)
+    receive_message::<Packet>(reader, MAX_BYTES)
 }
 
 // 发送一个packet
-pub fn send_packet(connection: &mut impl Write, packet: &Packet) -> Result<()> {
+pub fn send_packet(writer: &mut impl Write, packet: &Packet) -> Result<()> {
     let bytes = packet.encode_length_delimited_to_vec();
-    connection.write_all(&bytes)?;
-    connection.flush()?;
+    writer.write_all(&bytes)?;
+    writer.flush()?;
     Ok(())
 }
 
-pub fn send_complete_message(connection: &mut impl Write, message: &CompleteMessage) -> Result<()> {
+pub fn send_complete_message(writer: &mut impl Write, message: &CompleteMessage) -> Result<()> {
     for p in message.to_packets()? {
         let packet = Packet {
             sum: Some(Sum::PacketMsg(p)),
         };
-        send_packet(connection, &packet)?;
+        send_packet(writer, &packet)?;
     }
     Ok(())
 }

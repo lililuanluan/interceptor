@@ -78,7 +78,7 @@ impl Ord for ScheduledJob {
 // forwarder负责两件事：给节点转发消息，写日志
 pub struct Forwarder<W: Write> {
     inbox: Receiver<ForwardItem>, // 从controller接收消息以及pingpong直塞的管道
-    writers: HashMap<(usize, usize), W>, // from,to -> socket
+    node_writers: HashMap<(usize, usize), W>, // from,to -> socket
     started_instant: Instant,
     message_writer: LogWriter<MessageLog>,
     shutdown: CancellationToken,
@@ -95,7 +95,7 @@ impl<W: Write + Send + 'static> Forwarder<W> {
     ) -> Self {
         Self {
             inbox,
-            writers,
+            node_writers: writers,
             started_instant,
             message_writer,
             shutdown,
@@ -161,7 +161,7 @@ impl<W: Write + Send + 'static> Forwarder<W> {
             delay,
         } = job;
         let writer = self
-            .writers
+            .node_writers
             .get_mut(&(from, to))
             .with_context(|| format!("unknown direction {from}->{to}"))?;
 
@@ -214,7 +214,7 @@ impl<W: Write + Send + 'static> Forwarder<W> {
 
     pub fn send_pingpong(&mut self, from: usize, to: usize, sum: Sum) -> Result<()> {
         let writer = self
-            .writers
+            .node_writers
             .get_mut(&(from, to))
             .with_context(|| format!("unknown direction {from}->{to}"))?;
         send_packet(writer, &Packet { sum: Some(sum) })
