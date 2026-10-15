@@ -27,7 +27,8 @@ pub struct MessageLog {
     pub intercepted_us: u128,
     pub forwarded_at: String, // interceptor发送这个消息的时间（注意不要搞混了）
     pub forwarded_us: u128,
-    pub forwarded_bytes_hex: String,           // 发送的字节，hex
+    pub delay_us: u128, // 这个是controller返回的delay，可以用delay和forwarded_at - intercepted_at 比较抖动
+    pub forwarded_bytes_hex: String, // 发送的字节，hex
     pub intercepted_bytes_hex: Option<String>, // 如果没有篡改则为None
 }
 

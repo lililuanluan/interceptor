@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
     let cleanup_result = rm.cleanup().await;
     // 等待所有interceptor任务退出
     while let Some(result) = network.join_next().await {
-        // 所以这里分支是通过信号杀死的
+        // 这些报错基本都是 shutdown + cleanup 关掉socket后 read 失败导致的
         match result {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {

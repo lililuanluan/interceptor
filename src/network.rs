@@ -5,21 +5,18 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use futures_util::stream::Forward;
-use sha2::digest::HashMarker;
-// 不再需要 SecondsFormat
-use tendermint_proto::p2p::packet::Sum; // 不再需要 Packet
-use tokio::sync::mpsc; // 新增
+use tendermint_proto::p2p::packet::Sum;
+use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use crate::block_monitor::{BlockLog, join_monitors, run_block_height_monitor};
-use crate::controller::{Controller, Intercepted}; // 新增
-use crate::forwarder::{ForwardItem, Forwarder}; // 新增
+use crate::controller::{Controller, Intercepted};
+use crate::forwarder::{ForwardItem, Forwarder};
 use crate::logger::LogWriter;
-use crate::message::{MessageBuilder, MessageLog}; // 不再需要 sha256_hex
+use crate::message::{MessageBuilder, MessageLog};
 use crate::node::Node;
-use crate::p2p::{connect_as, receive_packet, split_connection}; // 不再需要 send_*
+use crate::p2p::{connect_as, receive_packet, split_connection};
 use crate::resource_manager::ResourceManager;
 
 pub struct Network {
@@ -32,7 +29,7 @@ pub struct Network {
 
 pub enum NetworkEvent {
     AllBlocksReached,
-    InterceptorStopped, // interceptor_tasks结束，正常情况下会一直循环转发任务
+    InterceptorStopped, // interceptor_tasks意外结束，正常情况下会一直循环转发任务
 }
 
 // 拦截packet，组装message，推送给controller/forwarder
@@ -155,6 +152,9 @@ impl Network {
         rm: &mut ResourceManager,
         message_writer: LogWriter<MessageLog>,
     ) -> Result<()> {
+        // tx=transmit rx=receive
+        // tx/rx是句柄，拿到tx只能send()，拿到rx只能receive()，所以关键是谁持有它
+
         // 创建多个blocking任务，将句柄保存起来，后面可以等待它们结束
         // 对每一对连接，创建一个拦截任务，总体创建controller和forwarder任务，并创建它们之间的通信管道
         let (controller_tx, controller_rx) = mpsc::unbounded_channel::<Intercepted>();
@@ -197,9 +197,15 @@ impl Network {
 
         // controller_tx没有用了，但是forwarder_tx还要给controller的run task
         let started_instant = self.started_instant;
+        let shutdown = self.shutdown.clone();
         self.interceptor_tasks.spawn_blocking(move || {
-            let mut forwarder =
-                Forwarder::new(forwarder_rx, writers, started_instant, message_writer);
+            let mut forwarder = Forwarder::new(
+                forwarder_rx,
+                writers,
+                started_instant,
+                message_writer,
+                shutdown,
+            );
             forwarder.run()
         });
 

@@ -1,8 +1,9 @@
 use std::sync::mpsc::Sender;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use rand::Rng;
 use tokio::sync::mpsc;
 
 use crate::forwarder::{ForwardItem, Origin, SendJob};
@@ -49,7 +50,7 @@ impl Controller {
     }
 
     fn on_intercepted(&mut self, msg: Intercepted) -> Result<()> {
-        // 直接转发给forwarder
+        // 组装SendJob（暂用一个随机delay占位）后推给forwarder
         let Intercepted {
             from,
             to,
@@ -71,6 +72,7 @@ impl Controller {
                 intercepted_instant,
                 data: None, // 没被篡改
             }),
+            delay: Duration::from_millis(rand::rng().random_range(0..=200_u64)),
         };
 
         self.to_forwarder
