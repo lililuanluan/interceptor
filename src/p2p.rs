@@ -48,8 +48,8 @@ impl NodeID {
     /*
     {"priv_key":{"type":"tendermint/PrivKeyEd25519","value":"XZBDKAvX2f2kR8+DM4hJi6t9+19lNtenPikwQLvKnR1iCqsrle+wKkKlP+BatppXAF47Qk5vqVxR8kDbdBoKFQ=="}}
     */
-    // implementation: https://github.com/cometbft/cometbft/blob/v0.38.21/crypto/ed25519/ed25519.go
-    // 在这个json中，priv_key是64字节的，前32字节是私钥（seed），用这个私钥可以生成32位的公钥，而后32位就是公钥，可以验证二者是否相等
+    // implementation: https://github.com/cometbft/cometbft/blob/v0.40.0/crypto/ed25519/ed25519.go
+    // 在这个json中，priv_key是64字节的，前32字节是私钥（seed），用这个私钥可以生成32字节的公钥，而后32字节就是公钥，可以验证二者是否相等
 
     pub fn load(path: &Path) -> Result<Self> {
         // 将文件读取到字符串
@@ -151,7 +151,7 @@ where
 }
 
 pub fn receive_remote_node_info(connection: &mut PeerConnection) -> Result<DefaultNodeInfo> {
-    const MAX_BYTES: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/node_info.go#L16
+    const MAX_BYTES: usize = 10240; // https://github.com/cometbft/cometbft/blob/v0.40.0/p2p/node_info.go#L16
     receive_message::<DefaultNodeInfo>(connection, MAX_BYTES)
 }
 
@@ -168,7 +168,8 @@ pub fn exchanged_node_info(
 // 接受一个消息packet
 pub fn receive_packet(reader: &mut impl Read) -> Result<Packet> {
     // 和之前的类似
-    const MAX_BYTES: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.38.21/p2p/conn/connection.go#L660
+    // 上游是运行时算出来的（marshal一个payload=1024的PacketMsg再取长度），这里直接写死结果
+    const MAX_BYTES: usize = 1034; // https://github.com/cometbft/cometbft/blob/v0.40.0/p2p/conn/connection.go#L705
     receive_message::<Packet>(reader, MAX_BYTES)
 }
 

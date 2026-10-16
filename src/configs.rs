@@ -15,7 +15,7 @@ pub struct Config {
     #[config_arg(default_value = "4")] // 3f+1
     pub num_nodes: u32,
 
-    #[config_arg(default_value = "cometbft/cometbft:v0.38.21")]
+    #[config_arg(default_value = "cometbft/cometbft:v0.40.0")]
     pub docker_image: String,
 
     #[config_arg(accept_from = "config_only")] // 只从配置文件读取，这个库有问题
