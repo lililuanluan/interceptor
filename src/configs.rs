@@ -32,6 +32,10 @@ pub struct Config {
 
     #[config_arg(accept_from = "cli_and_config", default_value = "scripts")]
     pub scripts_dir: String,
+
+    // 通过cli提供交易提交的配置文件，如果不提供则不执行交易提交
+    #[config_arg(accept_from = "cli_and_config")]
+    pub tx_config_yaml: Option<String>,
 }
 
 #[derive(Debug)]

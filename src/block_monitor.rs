@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::logger::{LogSchema, LogWriter};
 use crate::node::{BlockSocket, receive_block};
+use crate::transaction::TxSubmitter;
 
 #[derive(Serialize)]
 pub struct BlockLog {
@@ -32,7 +33,10 @@ pub async fn run_block_height_monitor(
     started_instant: Instant, // 测试的启动时间，用于计算elapsed
     blocks_writer: LogWriter<BlockLog>,
     shutdown: CancellationToken,
+    tx_submitter: TxSubmitter,
+    rpc_url: String,
 ) -> Result<()> {
+    let mut last_block_height = 0;
     loop {
         // 同时等待新的出块以及shutdown
         // 这里是异步的，所以返回时socket随即被释放，不需要resource manager管理
@@ -47,6 +51,25 @@ pub async fn run_block_height_monitor(
         };
 
         let height = block_event.height;
+        let observed = block_event
+            .observed_instant
+            .saturating_duration_since(started_instant);
+        println!(
+            "[node {node_id}] block {height} updated at {}.{:03}s (hash {})",
+            observed.as_secs(),
+            observed.subsec_millis(),
+            block_event.hash.get(..8).unwrap_or(&block_event.hash)
+        );
+
+        if height > last_block_height {
+            tx_submitter.on_block_update(
+                node_id,
+                height,
+                &rpc_url,
+                block_event.observed_instant,
+            )?;
+            last_block_height = height;
+        }
         let record = BlockLog {
             node: node_id,
             height,
@@ -55,10 +78,7 @@ pub async fn run_block_height_monitor(
             observed_at: block_event
                 .observed_at
                 .to_rfc3339_opts(SecondsFormat::Micros, true),
-            observed_us: block_event
-                .observed_instant
-                .saturating_duration_since(started_instant)
-                .as_micros(),
+            observed_us: observed.as_micros(),
         };
 
         blocks_writer

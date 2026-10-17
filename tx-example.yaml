@@ -1,0 +1,11 @@
+
+transactions:
+  - node: 0
+    after_heights: [3, 5, 8]
+    kv: "name=alice"
+    dt: 0.2
+
+  - node: 2
+    after_heights: [4, 7]
+    kv: "name=bob"
+    dt: 0

@@ -40,3 +40,4 @@ pub mod node;
 pub mod p2p;
 pub mod resource_manager;
 pub mod testnet;
+pub mod transaction;

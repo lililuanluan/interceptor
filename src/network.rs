@@ -18,6 +18,7 @@ use crate::message::{MessageBuilder, MessageLog};
 use crate::node::Node;
 use crate::p2p::{connect_as, receive_packet, split_connection};
 use crate::resource_manager::ResourceManager;
+use crate::transaction::TxSubmitter;
 
 pub struct Network {
     pub nodes: Vec<Node>,
@@ -102,6 +103,7 @@ impl Network {
         &mut self,
         target_height: u64,
         blocks_writer: LogWriter<BlockLog>,
+        tx_submitter: TxSubmitter,
     ) -> Result<()> {
         for id in 0..self.nodes.len() {
             let socket = self.nodes[id]
@@ -116,6 +118,8 @@ impl Network {
                 self.started_instant, // Instant是Copy，不用显式clone
                 blocks_writer.clone(),
                 self.shutdown.clone(),
+                tx_submitter.clone(),
+                self.nodes[id].rpc_url.clone(),
             ));
         }
         Ok(())
