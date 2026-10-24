@@ -14,7 +14,7 @@ use crate::logger::LogWriter;
 use crate::message::{CompleteMessage, MessageLog, sha256_hex};
 use crate::p2p::{send_complete_message, send_packet};
 
-// 从管道里读到的两类消息，一个是从controller发来的，一个是interceptor直塞的pingpong
+// The channel carries controller messages and Ping/Pong packets sent directly by the interceptor.
 #[derive(Debug)]
 pub enum ForwardItem {
     Message(SendJob),
@@ -26,8 +26,8 @@ pub struct SendJob {
     pub from: usize,
     pub to: usize,
     pub channel_id: i32,
-    pub data: Vec<u8>,            // 要发出去的字节
-    pub received: Option<Origin>, // 拦截到的数据，如果是凭空捏造则为None
+    pub data: Vec<u8>,            // Bytes to send.
+    pub received: Option<Origin>, // Intercepted origin; None for a fabricated message.
     pub delay: Duration,
 }
 
@@ -36,7 +36,7 @@ pub struct Origin {
     pub packets: usize,
     pub intercepted_at: DateTime<Utc>,
     pub intercepted_instant: Instant,
-    pub data: Option<Vec<u8>>, // 如果没被篡改则为None
+    pub data: Option<Vec<u8>>, // None if the message was not mutated.
 }
 
 // deadline = intercepted_instant + delay
@@ -45,28 +45,30 @@ struct ScheduledJob {
     job: SendJob,
 }
 
-// 将ScheduledJob按deadline放入最小堆；forwarder 本身用 recv_timeout 睡到堆顶的deadline，
-// 到期或被新消息唤醒后回到循环顶部发送
+// Order ScheduledJob entries by deadline in a min-heap. The forwarder uses recv_timeout
+// to wait until the earliest deadline, then returns to the loop's top to send due messages
+// when the deadline arrives or a new message wakes it.
 
-// 关系代数，等价关系
-// 对称性：a==b => b==a
-// 传递性：a==b, b==c => a==c
-// 自反性：for all a: a==a
-// PartialEq不要求自反性，而Eq要求。例如f64就是实现了PartialEq，但没有实现Eq，因为NAN不等于自身
-// 不能直接实现Eq，因为Eq的定义依赖PartialEq，所以必须显式实现PartialEq
+// Relations and equivalence relations:
+// Symmetry: a == b => b == a.
+// Transitivity: a == b and b == c => a == c.
+// Reflexivity: for all a, a == a.
+// PartialEq does not require reflexivity, but Eq does. For example, f64 implements PartialEq
+// but not Eq because NaN is not equal to itself.
+// Eq requires PartialEq, so PartialEq must be implemented explicitly first.
 impl PartialEq for ScheduledJob {
     fn eq(&self, other: &Self) -> bool {
         self.deadline == other.deadline
     }
 }
-impl Eq for ScheduledJob {} // 自反性，等价关系，不用实现任何方法，只是提供一个承诺
+impl Eq for ScheduledJob {} // Promise reflexivity/equivalence; no additional methods are required.
 
-// 对于比较，Ordering有三个值：Less,Equal,Greater
-// Ord是所有元素都可比，返回Ordering，而PartialOrd不一定，所以返回Option<Ordering>
-// 类似的，必须实现PartialOrd才能实现Ord，rust不会自动推导
+// Ordering has three values: Less, Equal, and Greater.
+// Ord makes all elements comparable and returns Ordering; PartialOrd may not, so it returns Option<Ordering>.
+// Similarly, Ord requires PartialOrd; Rust does not infer that implementation automatically.
 impl PartialOrd for ScheduledJob {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other)) // 调用Ord::cmp
+        Some(self.cmp(other)) // Call Ord::cmp.
     }
 }
 impl Ord for ScheduledJob {
@@ -75,9 +77,9 @@ impl Ord for ScheduledJob {
     }
 }
 
-// forwarder负责两件事：给节点转发消息，写日志
+// The forwarder has two responsibilities: forwarding messages to nodes and recording logs.
 pub struct Forwarder<W: Write> {
-    inbox: Receiver<ForwardItem>, // 从controller接收消息以及pingpong直塞的管道
+    inbox: Receiver<ForwardItem>, // Receives controller messages and directly enqueued Ping/Pong packets.
     node_writers: HashMap<(usize, usize), W>, // from,to -> socket
     started_instant: Instant,
     message_writer: LogWriter<MessageLog>,
@@ -109,7 +111,7 @@ impl<W: Write + Send + 'static> Forwarder<W> {
                 return Ok(());
             }
 
-            // 每次醒来之后，将堆顶到期的消息全部发掉
+            // On each wake-up, send all messages whose deadlines have passed.
             while let Some(Reverse(top)) = self.pending.peek() {
                 if top.deadline > Instant::now() {
                     break;
@@ -118,37 +120,38 @@ impl<W: Write + Send + 'static> Forwarder<W> {
                 self.send_message(entry.job)?;
             }
 
-            // 睡到下一个deadline
+            // Wait until the next deadline.
             let next_deadline = self.pending.peek();
             let timeout = next_deadline
-                .map(|Reverse(entry)| entry.deadline.saturating_duration_since(Instant::now())) // 如果是None，不会走map，直接返回None
-                .unwrap_or(Duration::from_secs(3600)); // 堆空直接长睡，等新消息来的时候叫醒
+                .map(|Reverse(entry)| entry.deadline.saturating_duration_since(Instant::now())) // None skips the closure and remains None.
+                .unwrap_or(Duration::from_secs(3600)); // Use a long wait for an empty heap; new messages wake it.
 
-            // recv_timeout(timeout) 等待inbox消息，如果timeout返回error（就是睡眠期间没有人打扰，也就是没有新消息过来，此时醒来的时候直接把堆顶发了）
-            // 这里的阻塞由操作系统调度
+            // recv_timeout waits for an inbox message. A timeout error means no message arrived
+            // during the wait; the next iteration sends the due item at the heap's top.
+            // The operating system schedules this blocking wait.
             match self.inbox.recv_timeout(timeout) {
                 Ok(ForwardItem::Message(job)) => {
                     let start = job
                         .received
                         .as_ref()
                         .map(|origin| origin.intercepted_instant)
-                        .unwrap_or_else(Instant::now); // 如果origin不存在，则为凭空捏造的消息
+                        .unwrap_or_else(Instant::now); // No origin means the message was fabricated.
 
                     let deadline = start.checked_add(job.delay).context("deadline deduction")?;
-                    self.pending.push(Reverse(ScheduledJob { deadline, job })); // 进入下一次循环之后重新查看堆顶
+                    self.pending.push(Reverse(ScheduledJob { deadline, job })); // Recheck the heap's top on the next iteration.
                 }
                 Ok(ForwardItem::PingPong { from, to, sum }) => {
-                    // 直接发送pingpong
+                    // Forward Ping/Pong immediately.
                     self.send_pingpong(from, to, sum)?;
                 }
-                Err(RecvTimeoutError::Timeout) => {} // 重新进入循环，发送堆顶
-                Err(RecvTimeoutError::Disconnected) => return Ok(()), // 上游全部结束
+                Err(RecvTimeoutError::Timeout) => {} // Loop again to send the due item at the heap's top.
+                Err(RecvTimeoutError::Disconnected) => return Ok(()), // All upstream senders have exited.
             }
         }
     }
 
     pub fn send_message(&mut self, job: SendJob) -> Result<()> {
-        // 写日志+转发给节点
+        // Forward the message to the node and record its log entry.
         let forwarded_at = Utc::now();
         let forwarded_instant = Instant::now();
 
@@ -168,12 +171,12 @@ impl<W: Write + Send + 'static> Forwarder<W> {
         let message = CompleteMessage {
             channel_id,
             data,
-            packet_count: 0, // 这里不会用到
+            packet_count: 0, // Not used here.
         };
 
         send_complete_message(writer, &message).with_context(|| format!("send {from} -> {to}"))?;
 
-        // 写日志
+        // Record the log entry.
         let (packets, intercepted_at, intercepted_us) = match &received {
             Some(origin) => (
                 origin.packets,
@@ -185,7 +188,7 @@ impl<W: Write + Send + 'static> Forwarder<W> {
                     .saturating_duration_since(self.started_instant)
                     .as_micros(),
             ),
-            None => (0, String::new(), 0), // 凭空捏造的
+            None => (0, String::new(), 0), // A fabricated message.
         };
 
         self.message_writer.log_blocking(MessageLog {

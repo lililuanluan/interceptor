@@ -6,7 +6,9 @@ use bollard::Docker;
 pub struct ResourceManager {
     docker: Docker,
     container_ids: Vec<String>,
-    sockets: Vec<TcpStream>, // 通常情况下，socket句柄在释放后就会关闭，但是我这里需要阻塞收包（read_exact，数据没有收够的时候就一直在那等，且timeout=None），所以必须在退出时打断读取
+    // Sockets normally close when their handles are dropped, but read_exact can wait indefinitely
+    // for enough data with timeout=None, so shutdown must explicitly interrupt these reads.
+    sockets: Vec<TcpStream>,
 }
 
 impl ResourceManager {
@@ -31,7 +33,7 @@ impl ResourceManager {
         for socket in &self.sockets {
             // both = read + write
             if let Err(err) = socket.shutdown(Shutdown::Both) {
-                // 如果是已经断开的连接，则不需要再次关闭
+                // An already disconnected socket does not need to be shut down again.
                 if err.kind() != std::io::ErrorKind::NotConnected {
                     errors.push(format!("Shutdown socket {socket:?}: {err}"));
                 }

@@ -24,11 +24,12 @@ pub async fn init_testnet_config(
         testnet_config_dir.display()
     ))?;
 
-    // 使用绝对路径mount
+    // Use an absolute path for the mount.
     let output_dir = fs::canonicalize(&testnet_config_dir)?;
     let output_str = output_dir.to_str().context("must be UTF8")?;
 
-    // 取宿主机输出目录所有者的 UID 和 GID，提供给docker，让容器中的进程以这个 UID/GID 运行。它通过挂载目录创建的文件，可以直接管理，不必sudo
+    // Run the container process with the host output directory owner's UID/GID so files
+    // created through the mount can be managed on the host without sudo.
     let metadata = fs::metadata(&output_dir)?;
     let user = format!("{}:{}", metadata.uid(), metadata.gid());
 
@@ -38,24 +39,24 @@ pub async fn init_testnet_config(
     let body = ContainerCreateBody {
         image: Some(image.to_owned()),
         user: Some(user),
-        working_dir: Some("/tmp".into()), // 这是容器内的工作路径
+        working_dir: Some("/tmp".into()), // Working directory inside the container.
 
-        // 命令自身的home
+        // The command's own CometBFT home directory.
         env: Some(vec!["CMTHOME=/tmp/init-home".into()]),
         cmd: Some(vec![
             "-c".into(),
             script,
-            "testnet-init".into(), // scritp的$0
+            "testnet-init".into(), // The script's $0.
             num_nodes.to_string(), // $1
         ]),
         entrypoint: Some(vec!["/bin/sh".into()]),
 
         host_config: Some(HostConfig {
-            // 将容器内的/out路径挂载到宿主
+            // Bind the host output directory to /out inside the container.
             binds: Some(vec![format!("{output_str}:/out:rw")]),
             network_mode: Some("none".into()),
 
-            // 不要自动删除，而是成功时手动删除，失败则保留
+            // Remove explicitly after success rather than automatically; retain the container on failure.
             auto_remove: Some(false),
             ..Default::default()
         }),
@@ -63,20 +64,20 @@ pub async fn init_testnet_config(
         ..Default::default()
     };
 
-    // 创建用于生成密钥等配置的容器
+    // Create the container that generates keys and other configuration.
     let container = docker
         .create_container(None, body)
         .await
         .context("Failed to create testnet init container")?;
 
-    // 启动容器
+    // Start the container.
     let id = container.id;
     docker
         .start_container(&id, None)
         .await
         .with_context(|| format!("Failed to start init container {id}"))?;
 
-    // 等待容器退出
+    // Wait for the container to exit.
     let exit = docker
         .wait_container(
             &id,
@@ -97,12 +98,12 @@ pub async fn init_testnet_config(
         exit.status_code
     );
 
-    // 到这里容器成功退出，将容器移除，但是宿主机上生成的配置文件保留
+    // The container exited successfully; remove it while retaining the generated configuration on the host.
     docker
         .remove_container(
             &id,
             Some(RemoveContainerOptionsBuilder::default().v(true).build()),
-        ) // 删除匿名卷
+        ) // Remove anonymous volumes.
         .await
         .with_context(|| format!("failed to remove container {id}"))?;
 

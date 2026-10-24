@@ -9,7 +9,7 @@ use clap_config_file::ClapConfigFile;
 use crate::filepath::create_shared_dir;
 
 #[derive(ClapConfigFile)]
-#[config_file_name = "interceptor"] // 自动发现interceptor.yaml/json等，TODO：禁用这个，必须显式提供！
+#[config_file_name = "interceptor"] // Auto-discover interceptor.yaml/json/etc. TODO: disable discovery and require an explicit path.
 #[config_file_formats = "yaml,json,toml"]
 pub struct Config {
     #[config_arg(default_value = "4")] // 3f+1
@@ -18,8 +18,8 @@ pub struct Config {
     #[config_arg(default_value = "cometbft/cometbft:v0.40.0")]
     pub docker_image: String,
 
-    #[config_arg(accept_from = "config_only")] // 只从配置文件读取，这个库有问题
-    pub auto_pull_image: Option<bool>, // TODO: 将option<bool>换成别的
+    #[config_arg(accept_from = "config_only")] // Read only from the config file due to an issue with this library.
+    pub auto_pull_image: Option<bool>, // TODO: replace Option<bool> with another representation.
 
     #[config_arg(accept_from = "cli_and_config")]
     pub cluster_id: Option<String>,
@@ -33,7 +33,7 @@ pub struct Config {
     #[config_arg(accept_from = "cli_and_config", default_value = "scripts")]
     pub scripts_dir: String,
 
-    // 通过cli提供交易提交的配置文件，如果不提供则不执行交易提交
+    // Transaction submission config supplied via the CLI; omit it to disable transaction submission.
     #[config_arg(accept_from = "cli_and_config")]
     pub tx_config_yaml: Option<String>,
 }
@@ -60,7 +60,7 @@ impl Config {
         Ok(dir)
     }
 
-    // TODO: 外部手动指定这两个路径
+    // TODO: allow both paths to be specified externally.
     pub fn get_run_paths(&self) -> Result<RunPaths> {
         let cluster_id = self
             .cluster_id
@@ -79,14 +79,14 @@ impl Config {
 
         let root = PathBuf::from(root);
 
-        // 如果root不存在，不要创建！直接退出
+        // Do not create the root directory if it is missing; return an error immediately.
         ensure!(root.exists(), "root {:?} doesn't exist", root);
 
         let run_paths = RunPaths {
             testnet_config_dir: root.clone().join(&cluster_id).join("config"),
             test_log_dir: root.clone().join(&cluster_id).join("logs"),
         };
-        // 创建一下 root/cluster_id
+        // Create root/cluster_id.
         create_shared_dir(&root.join(&cluster_id))?;
         Ok(run_paths)
     }

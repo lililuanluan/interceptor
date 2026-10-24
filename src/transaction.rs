@@ -25,13 +25,13 @@ pub struct TxEntry {
     pub dt: Duration,
 }
 
-// 对同一节点提交多个相同transaction会被拒绝，这里加一个头区分
+// Repeated identical transactions submitted to the same node are rejected; add a tag to distinguish them.
 fn tag_kv(kv: &str, id: usize, height: u64) -> String {
     format!("{kv}[{id},{height}]")
 }
 
 fn to_seconds<'d, D>(deserializer: D) -> std::result::Result<Duration, D::Error>
-// 这里需要用std::Result
+// Use std::result::Result here.
 where
     D: serde::Deserializer<'d>,
 {
@@ -56,9 +56,9 @@ impl Tx {
                 .try_deserialize()
                 .with_context(|| format!("parse transaction config {path}"))?;
 
-            // 去掉node不在num_nodes范围的，和after_height不在max_block范围的
+            // Filter out nodes outside num_nodes and heights outside the max_block range.
             plan.transactions.retain_mut(
-                // 这里提供一个过滤函数，只有返回true的元素保留在transactions里
+                // Keep an entry in transactions only when this predicate returns true.
                 |tx| {
                     if tx.node >= num_nodes {
                         return false;
@@ -93,7 +93,7 @@ impl LogSchema for TxLog {
     const FILE: &'static str = "tx.csv";
 }
 
-// 提交transaction的response的结果
+// The result returned in a transaction submission response.
 #[derive(Deserialize)]
 struct CheckTxResult {
     code: u32,
@@ -109,7 +109,7 @@ async fn submit_tx(
     expected_hash: &str,
 ) -> Result<CheckTxResult> {
     let response: Value = client
-        .post(rpc_url) // 创建一个http POST 请求
+        .post(rpc_url) // Build an HTTP POST request.
         .json(&json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -119,8 +119,8 @@ async fn submit_tx(
             },
         }))
         .send()
-        .await? // 等待http响应
-        .error_for_status()? // 检查http状态码，200则继续处理
+        .await? // Wait for the HTTP response.
+        .error_for_status()? // Check the HTTP status; continue for a successful response such as 200.
         .json()
         .await?;
 
@@ -179,7 +179,7 @@ impl TxSubmitter {
         rpc_url: &str,
         observed_instant: Instant,
     ) -> Result<()> {
-        // 当收到某个节点的block更新之后，看自己的tx中有没有匹配的提交配置，如果有则设置一个定时器提交任务
+        // On a node's block update, find matching transaction entries and schedule timed submission tasks.
         if self.shutdown.is_cancelled() {
             return Ok(());
         }
@@ -215,7 +215,7 @@ impl TxSubmitter {
                 let mut check_tx_code: Option<u32> = None;
 
                 if ready && !shutdown.is_cancelled() {
-                    // 睡到了block update + dt的时刻，开始提交交易
+                    // The block update + dt deadline has arrived; start submitting the transaction.
                     submitted_us = Some(started_instant.elapsed().as_micros());
                     submitted_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true));
 

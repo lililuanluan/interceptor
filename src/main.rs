@@ -15,12 +15,12 @@ use interceptor::testnet;
 use interceptor::transaction::{Tx, TxLog, TxSubmitter};
 use tokio::signal::unix::{SignalKind, signal};
 
-// timeout 默认发送SIGTERM
-// timeout -s INT 指定发送SIGINT
-// Ctrl+c 发送SIGINT
-// kill PID 发送 SIGTERM
-// kill -9 PID SIGKILL 不能捕获
-// 我这里要同时处理SIGINT和SIGTERM
+// timeout sends SIGTERM by default.
+// timeout -s INT sends SIGINT instead.
+// Ctrl+C sends SIGINT.
+// kill PID sends SIGTERM.
+// kill -9 PID sends SIGKILL, which cannot be caught.
+// Handle both SIGINT and SIGTERM here.
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
         .build()?;
 
     let image = &config.docker_image;
-    let docker = Docker::connect_with_local_defaults()?; // 创建客户端对象
+    let docker = Docker::connect_with_local_defaults()?; // Create the client object.
     let mut rm = ResourceManager::new(docker.clone());
     let auto_pull = config.auto_pull_image.unwrap_or(true);
 
@@ -63,11 +63,11 @@ async fn main() -> Result<()> {
         &scripts_dir.join("init-testnet.sh"),
     )
     .await?;
-    // 生成：
+    // Generated files:
     // /tmp/cluster-id/config/node[0-4]/
     // config.toml  genesis.json  node_key.json  priv_validator_key.json
 
-    // 这三个初始化要在容器初始化之前
+    // Initialize the logger and its writers before initializing node containers.
     let mut logger = Logger::new(&run_paths.test_log_dir)?;
     let blocks_writer = logger.writer::<BlockLog>()?;
     let message_writer = logger.writer::<MessageLog>()?;
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
         {
             Ok(node) => node,
             Err(err) => {
-                // 这里如果创建节点容器失败则清理并退出
+                // If creating a node container fails, clean up and exit.
                 if let Err(e) = rm.cleanup().await {
                     eprintln!("cleanup failed: {e:#}");
                 }
@@ -96,8 +96,8 @@ async fn main() -> Result<()> {
         nodes.push(node);
     }
 
-    let started_at = Utc::now(); // 墙钟起点时间
-    let started_instant = Instant::now(); // 单调起点：算 _us 用
+    let started_at = Utc::now(); // Wall-clock start time.
+    let started_instant = Instant::now(); // Monotonic starting point for calculating _us values.
     println!("run started at {started_at}");
     let mut network = Network::new(nodes, started_instant);
     let tx_submitter = TxSubmitter::new(
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
             .subscribe_blocks_all(target_height, blocks_writer, tx_submitter.clone())
             .await?;
         network.connect_all(&mut rm, message_writer).await?;
-        // interceptor正常退出，收到ctrlc，收到term，这三件事都有可能发生，这里就是询问这三个句柄哪个发生了就执行哪个
+        // Handle whichever happens first: an interceptor completion event, Ctrl+C, or SIGTERM.
         tokio::select! {
             event = network.wait_event() => {
                 match event? {
@@ -125,8 +125,8 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            // tokio:select 任意一个分支执行，就会直接结束继续往下走
-            // 这里如果收到信号，则直接退出，所以无论是正常结束还是收到信号，都会执行后面的
+            // Once any tokio::select! branch runs, continue after the select.
+            // A signal also leaves the select, so cleanup below runs after either completion or a signal.
             _ = sigint.recv() => {
                 println!("received SIGINT");
             }
@@ -141,8 +141,8 @@ async fn main() -> Result<()> {
 
     network.shutdown();
 
-    // 等待所有block monitor退出（已经shutdown了，那边应该很快退出）
-    // 它们退出后将手里writer释放，这样channel就会关闭，可以让csv flush
+    // Wait for all block monitors to exit; shutdown has been requested, so they should exit promptly.
+    // Exiting releases their writers, allowing channels to close and CSV output to flush.
     if let Err(err) = network.join_block_tasks().await {
         eprintln!("block monitor failed: {err:#}");
 
@@ -152,15 +152,16 @@ async fn main() -> Result<()> {
     }
 
     tx_submitter.wait().await;
-    // 这里退出之后，可能是interceptor正常退出，也可能是收到了信号
-    // 如果是先收到信号，interceptor_task还在跑着，这里通过执行清理socket以及容器之后，interceptor_task就会自己报错，然后就结束了
+    // We may arrive here after normal interceptor completion or after a signal.
+    // If a signal arrived first, interception tasks may still be running; cleaning up sockets
+    // and containers makes their I/O fail so they can exit.
     let cleanup_result = rm.cleanup().await;
-    // 等待所有interceptor任务退出
+    // Wait for all interceptor tasks to exit.
     while let Some(result) = network.join_next().await {
-        // 这些报错基本都是 shutdown + cleanup 关掉socket后 read 失败导致的
+        // Most errors here are read failures caused by shutdown/cleanup closing sockets.
         match result {
             Ok(Ok(())) => {}
-            // 主动关闭 socket 通常会使 read_exact 返回错误。
+            // Explicitly closing a socket typically makes read_exact return an error.
             Ok(Err(err)) if is_expected_shutdown_error(&err) => {}
             Ok(Err(err)) => {
                 eprintln!("interceptor failed: {err:#}");
@@ -180,7 +181,7 @@ async fn main() -> Result<()> {
     cleanup_result?;
     logger_result
 }
-// cleanup 主动 shutdown socket 后，阻塞中的 read/write 会返回这几类错误 —— 属于预期退出
+// After cleanup shuts down a socket, blocked reads/writes may return these errors as part of normal shutdown.
 fn is_expected_shutdown_error(err: &anyhow::Error) -> bool {
     err.chain().any(|e| {
         e.downcast_ref::<std::io::Error>().is_some_and(|io| {

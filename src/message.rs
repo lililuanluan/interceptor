@@ -1,10 +1,12 @@
-// secrete_connection 是一条在interceptor-node之间的物理连接，tcp，双工
-// cometbft在发送消息时，会根据消息的类型发在不同channel上
-// channel是逻辑上的实现，物理上都在一个connection上发
-// 在packet中有一个channel_id来标识消息在哪个channel
-// 同一个channel上的消息是连续的，必须先发完一条消息的所有packet再发另一条，不同channel之间的消息可能穿插
-// channel≠消息类型，但是可以理解为“大类”：同一个用途的多个类型消息通常发在同一个channel上
-// 消息在发送时会拆成多个packet，需要从connection上接收之后，根据channel id，追加到之前的缓存中，在packet中有个efo:true/false，如果为true，说明这个packet是这条消息的最后一个包
+// A SecretConnection is a full-duplex physical TCP connection between the interceptor and a node.
+// CometBFT sends messages on different channels according to their type.
+// Channels are logical; they share the same physical connection.
+// Each packet carries a channel_id identifying its channel.
+// On one channel, all packets of a message must be sent before the next message;
+// packets from different channels may interleave.
+// A channel is not a message type but a broader category: related message types often share one channel.
+// Messages are split into packets. On receipt, append each packet to its channel's buffer.
+// The eof flag marks whether this is the message's final packet.
 
 use std::collections::HashMap;
 
@@ -16,20 +18,22 @@ use crate::logger::LogSchema;
 
 #[derive(Serialize)]
 pub struct MessageLog {
-    pub from: usize, // 发送方
+    pub from: usize, // Sender.
     pub to: usize,
     pub channel_id: i32,
-    pub len: usize,     // 字节数
-    pub packets: usize, // 收到的分片数
-    pub sha256: String, // 消息内容的哈希值，TODO：去掉原始的bytes，只保留哈希，然后用一个数据库做索引，这样避免广播的消息重复记录（运行4个节点的结果，消息中90%是重复gossip）
-    // pub signer: Option<String>, // 只有一部分消息有签名，这里记录原始签名者 TODO：实现extract_signer
+    pub len: usize,     // Byte count.
+    pub packets: usize, // Number of fragments received.
+    // Hash of the message contents. TODO: keep only the hash here and index raw bytes in a database
+    // to avoid logging duplicate broadcasts (90% of messages were duplicate gossip in a four-node run).
+    pub sha256: String,
+    // pub signer: Option<String>, // Only some messages are signed; record the original signer. TODO: implement extract_signer.
     pub intercepted_at: String,
     pub intercepted_us: u128,
-    pub forwarded_at: String, // interceptor发送这个消息的时间（注意不要搞混了）
+    pub forwarded_at: String, // When the interceptor sends this message; do not confuse this with other timestamps.
     pub forwarded_us: u128,
-    pub delay_us: u128, // 这个是controller返回的delay，可以用delay和forwarded_at - intercepted_at 比较抖动
-    pub forwarded_bytes_hex: String, // 发送的字节，hex
-    pub intercepted_bytes_hex: Option<String>, // 如果没有篡改则为None
+    pub delay_us: u128, // Controller-assigned delay; compare it with forwarded_at - intercepted_at to measure jitter.
+    pub forwarded_bytes_hex: String, // Sent bytes, encoded as hex.
+    pub intercepted_bytes_hex: Option<String>, // None if the message was not mutated.
 }
 
 impl LogSchema for MessageLog {
@@ -75,7 +79,7 @@ impl CompleteMessage {
         let mut packets = Vec::new();
         const MAX_PAYLOAD: usize = 1024;
 
-        let mut chunks = self.data.chunks(MAX_PAYLOAD).peekable(); // 创建一个可以查看但不消耗的迭代器
+        let mut chunks = self.data.chunks(MAX_PAYLOAD).peekable(); // Allow inspecting the next item without consuming it.
 
         while let Some(chunk) = chunks.next() {
             packets.push(PacketMsg {
@@ -90,7 +94,7 @@ impl CompleteMessage {
 
 #[derive(Debug, Default)]
 pub struct MessageBuilder {
-    channels: HashMap<i32, PartialMessage>, // 每个channel维护一个正在重组的消息
+    channels: HashMap<i32, PartialMessage>, // Keep one message under reassembly per channel.
 }
 
 impl MessageBuilder {
@@ -100,25 +104,25 @@ impl MessageBuilder {
         }
     }
 
-    // 输入一个packet，如果能组成完整消息则输出（但是没有输出也不能算错，所以用Result<Option>
+    // Consume a packet and return a complete message if available; an incomplete message is not an error, hence Result<Option>.
     pub fn handle_packet(&mut self, packet: PacketMsg) -> Result<Option<CompleteMessage>> {
-        // 在protobuf中，channel_id是i32，但是cometbft要求必须是0-255
+        // Protobuf uses i32 for channel_id, but CometBFT requires the range 0..=255.
         let channel_id = packet.channel_id;
         ensure!(
             (0..=255).contains(&channel_id),
             "Invalid channel id: {channel_id}"
         );
 
-        // 获取对应channel的之前积累下的消息片（或者为空）的可变引用
+        // Get a mutable reference to this channel's accumulated fragments, or start with an empty buffer.
         let partial = self.channels.entry(channel_id).or_default();
 
-        // 将新packet的数据追加到partial上
+        // Append the new packet's data to the partial message.
         partial.data.extend_from_slice(&packet.data);
         partial.packet_count += 1;
 
-        // 如果当前packet的eof是true，说明是最后一个分片
+        // eof=true means this is the final fragment.
         if packet.eof {
-            // std::mem:take将变量的值移动给新变量，并将原来的位置放上默认值
+            // std::mem::take moves the value out and replaces it with its default value.
             let tmp = std::mem::take(partial);
             Ok(Some(CompleteMessage {
                 channel_id,

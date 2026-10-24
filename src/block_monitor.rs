@@ -24,13 +24,13 @@ impl LogSchema for BlockLog {
     const FILE: &'static str = "blocks.csv";
 }
 
-// 跑一个节点的block subscription的监控循环
-// TODO：这里显式提供target_height，以后应该将这部分移除，让外部控制当所有节点都到达target height之后shutdown
+// Run the block subscription monitoring loop for one node.
+// TODO: remove the explicit target_height parameter and let an external coordinator shut down once all nodes reach the target.
 pub async fn run_block_height_monitor(
     node_id: usize,
-    mut socket: BlockSocket, // Node::subscribe_blocks返回的socket
+    mut socket: BlockSocket, // The socket returned by Node::subscribe_blocks.
     target_height: u64,
-    started_instant: Instant, // 测试的启动时间，用于计算elapsed
+    started_instant: Instant, // Test start time, used to calculate elapsed time.
     blocks_writer: LogWriter<BlockLog>,
     shutdown: CancellationToken,
     tx_submitter: TxSubmitter,
@@ -38,8 +38,8 @@ pub async fn run_block_height_monitor(
 ) -> Result<()> {
     let mut last_block_height = 0;
     loop {
-        // 同时等待新的出块以及shutdown
-        // 这里是异步的，所以返回时socket随即被释放，不需要resource manager管理
+        // Wait for either a new block or shutdown.
+        // This is asynchronous: returning drops the socket, so ResourceManager need not manage it.
         let block_event = tokio::select! {
             _ = shutdown.cancelled() => {
                 println!("[node {node_id}] block monitor stopped");
@@ -93,8 +93,8 @@ pub async fn run_block_height_monitor(
     }
 }
 
-// 对外部提供一个等待所有monitor任务的接口
-// 如果任意一个订阅连接失败，则shutdown，让所有block monitor任务退出
+// Expose an interface for waiting for all monitor tasks.
+// If any subscription fails, trigger shutdown so all block monitors exit.
 pub async fn join_monitors(
     tasks: &mut JoinSet<Result<()>>,
     shutdown: CancellationToken,
@@ -102,14 +102,14 @@ pub async fn join_monitors(
     let mut failure: Option<anyhow::Error> = None;
     while let Some(result) = tasks.join_next().await {
         let error = match result {
-            Ok(Ok(())) => continue, // 正常达到目标高度或shutdown的退出
-            Ok(Err(err)) => err,    // 监控任务自己的报错
-            Err(err) => err.into(), // 任务panic或abort
+            Ok(Ok(())) => continue, // Normal exit after reaching the target height or receiving shutdown.
+            Ok(Err(err)) => err,    // An error returned by the monitor itself.
+            Err(err) => err.into(), // The task panicked or was aborted.
         };
         shutdown.cancel();
 
         if failure.is_none() {
-            failure = Some(error); // 留第一个错误
+            failure = Some(error); // Keep the first error.
         }
     }
 

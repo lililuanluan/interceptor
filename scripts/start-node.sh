@@ -16,8 +16,8 @@ else
 	test -L "$CMTHOME/config"
 fi
 
-# exec让docker的停止信号直接交给cometbft
-# 禁止节点主动拨号、关闭 PEX。连接全部由 interceptor 建立。
+# exec lets Docker's stop signal reach CometBFT directly.
+# Disable outbound dialing and PEX. The interceptor establishes all connections.
 exec cometbft start \
 	--home "$CMTHOME" \
 	--proxy_app=persistent_kvstore \

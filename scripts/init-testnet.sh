@@ -3,14 +3,14 @@ umask 000
 
 count="$1"
 
-# 完整 testnet 只生成在初始化容器内部。
+# Generate the full testnet only inside the initialization container.
 cometbft testnet \
 	--v "$count" \
 	--o /tmp/generated \
 	--populate-persistent-peers=true \
 	--hostname-prefix node
 
-# 只导出配置和密钥，不导出 data。
+# Export only configuration and keys, not data.
 i=0
 while [ "$i" -lt "$count" ]; do
 	dest="/out/node$i"
@@ -18,7 +18,7 @@ while [ "$i" -lt "$count" ]; do
 	mkdir "$dest"
 	cp -R "/tmp/generated/node$i/config/." "$dest/"
 
-	# 导出的目录和文件对所有用户开放读写权限。
+	# Make exported directories and files readable and writable by everyone.
 	chmod 777 "$dest"
 	chmod 666 \
 		"$dest/config.toml" \

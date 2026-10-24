@@ -24,16 +24,16 @@ pub struct Network {
     pub nodes: Vec<Node>,
     pub interceptor_tasks: JoinSet<Result<()>>,
     pub block_monitor_tasks: JoinSet<Result<()>>,
-    shutdown: CancellationToken, // 通知所有异步任务退出
+    shutdown: CancellationToken, // Notify all asynchronous tasks to exit.
     started_instant: Instant,
 }
 
 pub enum NetworkEvent {
     AllBlocksReached,
-    InterceptorStopped, // interceptor_tasks意外结束，正常情况下会一直循环转发任务
+    InterceptorStopped, // An interceptor task stopped unexpectedly; normally these tasks keep forwarding.
 }
 
-// 拦截packet，组装message，推送给controller/forwarder
+// Intercept packets, assemble messages, and send them to the controller/forwarder.
 fn run_intercept_task<R: Read + Send + 'static>(
     mut reader: R,
     from: usize,
@@ -47,7 +47,7 @@ fn run_intercept_task<R: Read + Send + 'static>(
         match packet.sum.context("packet has no payload")? {
             Sum::PacketMsg(fragment) => {
                 if let Some(message) = message_builder.handle_packet(fragment)? {
-                    // 拦截器收到这个消息最后一个分片的时刻
+                    // The moment the interceptor receives this message's final fragment.
                     let intercepted_at = Utc::now();
                     let intercepted_instant = Instant::now();
 
@@ -65,7 +65,7 @@ fn run_intercept_task<R: Read + Send + 'static>(
                 }
             }
 
-            // 剩下两个消息类型都匹配到这个分支：
+            // Both remaining packet types match this branch.
             pingpong => {
                 to_forwarder
                     .send(ForwardItem::PingPong {
@@ -97,8 +97,8 @@ impl Network {
         self.shutdown.cancel();
     }
 
-    // 为每个节点订阅NewBlock事件，启动监控任务
-    // 必须在connect_all之前调用，这样不会漏掉早期的区块
+    // Subscribe to each node's NewBlock events and start its monitor task.
+    // Call this before connect_all to avoid missing early blocks.
     pub async fn subscribe_blocks_all(
         &mut self,
         target_height: u64,
@@ -115,7 +115,7 @@ impl Network {
                 id,
                 socket, // move
                 target_height,
-                self.started_instant, // Instant是Copy，不用显式clone
+                self.started_instant, // Instant implements Copy; no explicit clone is needed.
                 blocks_writer.clone(),
                 self.shutdown.clone(),
                 tx_submitter.clone(),
@@ -129,8 +129,8 @@ impl Network {
     }
 
     pub async fn join_block_tasks(&mut self) -> Result<()> {
-        // 等待所有block monitor结束
-        // monitor是生产者，只有它们停了，logger作为消费者才能wait()
+        // Wait for all block monitors to finish.
+        // Monitors are producers; they must stop before the logger consumer can finish wait().
         join_monitors(&mut self.block_monitor_tasks, self.shutdown.clone()).await
     }
 
@@ -140,7 +140,7 @@ impl Network {
                 result.context("block monitor failed")?;
                 Ok(NetworkEvent::AllBlocksReached)
             }
-            // interceptor_tasks是一个任务集合，哪个任务先返回就被join_next()取出
+            // join_next() takes whichever task in interceptor_tasks finishes first.
             result = self.interceptor_tasks.join_next() => {
                 let result = result.context("No interceptor task")?;
                 result??;
@@ -155,14 +155,15 @@ impl Network {
         message_writer: LogWriter<MessageLog>,
     ) -> Result<()> {
         // tx=transmit rx=receive
-        // tx/rx是句柄，拿到tx只能send()，拿到rx只能receive()，所以关键是谁持有它
+        // tx/rx are handles: tx can only send and rx can only receive, so ownership determines the role.
 
-        // 创建多个blocking任务，将句柄保存起来，后面可以等待它们结束
-        // 对每一对连接，创建一个拦截任务，总体创建controller和forwarder任务，并创建它们之间的通信管道
+        // Create blocking tasks and keep their handles so they can be joined later.
+        // Create interception tasks for each connection pair, one controller and one forwarder
+        // for the network, and the channels connecting them.
         let (controller_tx, controller_rx) = mpsc::unbounded_channel::<Intercepted>();
         let (forwarder_tx, forwarder_rx) = std::sync::mpsc::channel::<ForwardItem>();
 
-        // 所有方向上的writer都归forwarder持有，负责最终转发给节点
+        // The forwarder owns the writers for all directions and ultimately sends messages to nodes.
         let mut writers = HashMap::new();
 
         for i in 0..self.nodes.len() {
@@ -175,11 +176,11 @@ impl Network {
                 for (reader, writer, from, to) in
                     [(reader_i, writer_j, i, j), (reader_j, writer_i, j, i)]
                 {
-                    // spawn_blocking是move的，不能在里面使用self.xxx，否则会把self拖进去
+                    // The spawn_blocking closure uses move; avoid self.xxx inside it to keep self out of the capture.
                     let controller_tx = controller_tx.clone();
                     let forwarder_tx = forwarder_tx.clone();
 
-                    // 把每个方向上的连接写端存下来给forwarder
+                    // Save the connection's write half for each direction for the forwarder.
                     writers.insert((from, to), writer);
 
                     self.interceptor_tasks.spawn_blocking(move || {
@@ -189,7 +190,7 @@ impl Network {
             }
         }
 
-        // controller_tx没有用了，但是forwarder_tx还要给controller的run task
+        // controller_tx is no longer needed here, but forwarder_tx must go to the controller task.
         let started_instant = self.started_instant;
         let shutdown = self.shutdown.clone();
         self.interceptor_tasks.spawn_blocking(move || {

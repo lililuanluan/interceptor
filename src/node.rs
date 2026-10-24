@@ -19,7 +19,7 @@ use crate::resource_manager::ResourceManager;
 
 pub struct Node {
     pub identity: NodeID,
-    pub config_dir: PathBuf, // Path不是固定大小类型
+    pub config_dir: PathBuf, // Path is dynamically sized; store an owned PathBuf.
     pub container_id: String,
     pub port_map: HashMap<String, Option<Vec<PortBinding>>>,
     pub node_info: DefaultNodeInfo,
@@ -35,7 +35,7 @@ impl Node {
         ensure!(!self.block_subscribed, "Block subscription already created");
         let response = subscribe_blocks(&self.rpc_port).await?;
         self.block_subscribed = true;
-        // 这个socket所有权归block monitor
+        // The block monitor owns this socket.
         Ok(response)
     }
 
@@ -63,8 +63,8 @@ impl Node {
             .await
             .context(format!("container id {container_id} inspect failed"))?;
 
-        // 获取端口映射
-        // 返回option的时候，用.context转换位result，.with_context是提供闭包，而context只需要提供字符串
+        // Retrieve the port mappings.
+        // Convert Option to Result with context; with_context takes a closure, while context takes the message directly.
         let port_map = container_inspect
             .network_settings
             .context("Missing network_settings")?
@@ -80,7 +80,7 @@ impl Node {
             .parse()?;
 
         let rpc_port = port_map
-            .get("26657/tcp") // 节点的rpc端口，26656/tcp是p2p端口
+            .get("26657/tcp") // The node's RPC port; 26656/tcp is the P2P port.
             .and_then(|bindings| bindings.as_ref())
             .and_then(|bindings| bindings.first())
             .and_then(|binding| binding.host_port.as_deref())
@@ -94,7 +94,7 @@ impl Node {
 
         Ok(Self {
             identity: node_id,
-            config_dir: config_dir.to_path_buf(), // Path不是固定大小类型
+            config_dir: config_dir.to_path_buf(), // Path is dynamically sized; store an owned PathBuf.
             container_id,
             port_map,
             node_info,
@@ -108,12 +108,14 @@ impl Node {
 }
 
 struct RpcMessage {
-    pub observed_at: DateTime<Utc>, // 绝对时间戳
-    pub observed_instant: Instant, // 逐条记录获得block更新的时间Instant，Instant必须是两个时间点相减，而不能和绝对时间相互转换
+    pub observed_at: DateTime<Utc>, // Absolute timestamp.
+    // Record a monotonic observation time for each block update. Instants are used to calculate
+    // differences and cannot be directly converted to or from absolute timestamps.
+    pub observed_instant: Instant,
     pub value: Value,
 }
 async fn receive_rpc_response(socket: &mut BlockSocket) -> Result<RpcMessage> {
-    // rpc不一定一次就能收到回复，还可能是pingpong消息等，也可能对端关闭了连接
+    // The next frame may be Ping/Pong rather than an RPC reply, or the peer may close the connection.
     loop {
         let message = socket
             .next()
@@ -122,7 +124,7 @@ async fn receive_rpc_response(socket: &mut BlockSocket) -> Result<RpcMessage> {
 
         match message {
             Message::Text(text) => {
-                // 收到消息后立即记录时间
+                // Record the observation time immediately after receiving the message.
                 let observed_at = Utc::now();
                 let observed_instant = Instant::now();
                 let response: Value = serde_json::from_str(text.as_str())?;
@@ -137,7 +139,7 @@ async fn receive_rpc_response(socket: &mut BlockSocket) -> Result<RpcMessage> {
                 });
             }
             Message::Ping(_) => {
-                // 当tungstenite收到ping的时候，会自动构造一个pong并排队，这里直接flush即可
+                // Tungstenite automatically queues a Pong on receiving Ping; flush it here.
                 socket.flush().await?;
             }
 
@@ -154,10 +156,10 @@ async fn receive_rpc_response(socket: &mut BlockSocket) -> Result<RpcMessage> {
     }
 }
 
-// 订阅节点的block发布流
+// Subscribe to a node's block event stream.
 pub type BlockSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 pub async fn subscribe_blocks(rpc_port: &u16) -> Result<BlockSocket> {
-    // 向节点发送一个订阅请求，等待确认
+    // Send a subscription request to the node and wait for confirmation.
     tokio::time::timeout(Duration::from_secs(5), async {
         let url = format!("ws://127.0.0.1:{}/websocket", rpc_port);
         let (mut socket, _) = connect_async(url.as_str()).await?;
@@ -177,11 +179,11 @@ pub async fn subscribe_blocks(rpc_port: &u16) -> Result<BlockSocket> {
 
         let response = receive_rpc_response(&mut socket).await?;
         let response = &response.value;
-        // 期待收到这样的response：
+        // Expect a response like this:
         /*
                 {
                   "jsonrpc": "2.0",
-                  "id": 1,  <-- 就是前面request中的id
+                  "id": 1,  <-- The same ID as in the request above.
                   "result": {}
                 }
         */
@@ -195,13 +197,13 @@ pub async fn subscribe_blocks(rpc_port: &u16) -> Result<BlockSocket> {
     .context("Block subscription timed out")?
 }
 
-// 获取一个最新发布block的订阅消息
+// Receive a subscription notification for a newly published block.
 #[derive(Debug)]
 pub struct NewBlockEvent {
     pub height: u64,
     pub hash: String,
-    pub block_time: String, // block_time类似ripple的close_time，是共识的一部分
-    pub observed_at: DateTime<Utc>, // 本地接收到这个订阅消息的时间
+    pub block_time: String, // Like Ripple's close_time, block_time is part of consensus.
+    pub observed_at: DateTime<Utc>, // Local receipt time of this subscription notification.
     pub observed_instant: Instant,
 }
 pub async fn receive_block(socket: &mut BlockSocket) -> Result<NewBlockEvent> {
@@ -211,14 +213,14 @@ pub async fn receive_block(socket: &mut BlockSocket) -> Result<NewBlockEvent> {
         value,
     } = receive_rpc_response(socket).await?;
 
-    // json::Value的get方法是直接获取一个值（option），而pointer方法是提供一个路径下去，一路追到那个对应的值（option）
+    // Value::get accesses one field; Value::pointer follows a JSON path to the nested value. Both return Option.
     let value = value
         .pointer("/result/data/value")
         .context("Missing block event value")?;
 
     let height: u64 = value
         .pointer("/block/header/height")
-        .and_then(Value::as_str) // 如果是Some(x)，and_then(f) 返回f(x)
+        .and_then(Value::as_str) // For Some(x), and_then(f) returns f(x).
         .context("Missing block height")?
         .parse()?;
 
@@ -243,7 +245,7 @@ pub async fn receive_block(socket: &mut BlockSocket) -> Result<NewBlockEvent> {
     })
 }
 
-// 启动一个节点容器
+// Start a node container.
 pub async fn start_node(
     docker: &Docker,
     config_dir: &Path,
@@ -258,22 +260,22 @@ pub async fn start_node(
     let config_toml_path = config_dir.join("config.toml");
 
     let mut config: toml::Value = fs::read_to_string(&config_toml_path)?.parse()?;
-    // 在容器中，addrbook是用于记录peer的地址的，默认是写在容器中的config路径的
-    // 但是外部挂载将config设置为只读了，所以这里配置一个新的地址
+    // The address book stores peer addresses, normally under the container's config directory.
+    // That directory is mounted read-only, so configure a writable location instead.
     config["p2p"]["addr_book_file"] = "/tmp/validator/data/addrbook.json".into();
 
     fs::write(&config_toml_path, toml::to_string_pretty(&config)?)?;
 
     let port_bindings = HashMap::from([
         (
-            "26657/tcp".to_owned(), // 容器内部的tcp 26657 端口，用于rpc，to_owned()转换为String，将其绑定到宿主的 ip:port
+            "26657/tcp".to_owned(), // Container RPC port; to_owned() creates a String for binding it to a host IP/port.
             Some(vec![PortBinding {
-                host_ip: Some("127.0.0.1".into()), // 宿主的ip就是127.0.0.1
-                host_port: Some(String::new()), // 注意！这里提供""，让docker自动分配端口，这样可以并行开多个cluster
+                host_ip: Some("127.0.0.1".into()), // Bind on the host's loopback address.
+                host_port: Some(String::new()), // An empty string lets Docker allocate a port, allowing parallel clusters.
             }]),
         ),
         (
-            "26656/tcp".to_owned(), // 26656为p2p端口，用于节点之间连接的
+            "26656/tcp".to_owned(), // P2P port used for connections between nodes.
             Some(vec![PortBinding {
                 host_ip: Some("127.0.0.1".into()),
                 host_port: Some(String::new()),
@@ -290,7 +292,7 @@ pub async fn start_node(
 
         exposed_ports: Some(vec!["26657/tcp".into(), "26656/tcp".into()]),
         host_config: Some(HostConfig {
-            binds: Some(vec![format!("{}:/input-config:ro", config_dir.display())]), // 将 config_dir（/tmp/cluster-id/config/） 映射到容器内的 /input-config/ ro只读
+            binds: Some(vec![format!("{}:/input-config:ro", config_dir.display())]), // Mount the host config_dir at /input-config inside the container, read-only.
             port_bindings: Some(port_bindings),
             auto_remove: Some(false),
             ..Default::default()
@@ -313,13 +315,13 @@ pub async fn fetch_node_info(rpc_url: &str) -> Result<Value> {
         .timeout(Duration::from_secs(3))
         .build()?;
 
-    let url = format!("{}/status", rpc_url.trim_end_matches('/')); // http://127.0.0.1:26657/status CometBFT 定义的接口路径
+    let url = format!("{}/status", rpc_url.trim_end_matches('/')); // CometBFT's status endpoint, e.g. http://127.0.0.1:26657/status.
 
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let result: Result<Value> = async {
                 let response: Value = client
-                    .get(&url) // 构造向这个接口的GET请求
+                    .get(&url) // Build a GET request to this endpoint.
                     .send()
                     .await?
                     .error_for_status()?
@@ -347,14 +349,14 @@ pub async fn fetch_node_info(rpc_url: &str) -> Result<Value> {
 }
 
 fn parse_node_info(info: &Value) -> Result<DefaultNodeInfo> {
-    // 用 JSON 路径提取字符串，例如 /other/tx_index。
+    // Extract a string using a JSON path, e.g. /other/tx_index.
     let text = |path: &str| -> Result<&str> {
         info.pointer(path)
             .and_then(Value::as_str)
             .with_context(|| format!("Missing or invalid field: {path}"))
     };
 
-    // 同时接受 JSON 数字和数字字符串。
+    // Accept both JSON numbers and numeric strings.
     let number = |path: &str| -> Result<u64> {
         if let Some(n) = info.pointer(path).and_then(Value::as_u64) {
             return Ok(n);

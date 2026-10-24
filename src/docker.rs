@@ -3,7 +3,7 @@ use bollard::Docker;
 use bollard::query_parameters::CreateImageOptionsBuilder;
 use futures_util::TryStreamExt;
 pub async fn ensure_docker(docker: &Docker, image: &str, auto_pull: bool) -> Result<()> {
-    docker.ping().await?; // 确认docker deamon可用
+    docker.ping().await?; // Check that the Docker daemon is available.
 
     match docker.inspect_image(image).await {
         Ok(_) => {
@@ -13,7 +13,7 @@ pub async fn ensure_docker(docker: &Docker, image: &str, auto_pull: bool) -> Res
         Err(bollard::errors::Error::DockerResponseServerError {
             status_code: 404, ..
         }) => {
-            // ensure如果不满足条件立刻返回
+            // ensure returns immediately if the condition is false.
             ensure!(
                 auto_pull,
                 "Auto-pull image disabled, image {:?} not found",
@@ -25,14 +25,14 @@ pub async fn ensure_docker(docker: &Docker, image: &str, auto_pull: bool) -> Res
         }
     }
 
-    // 拉取镜像
+    // Pull the image.
     let options = CreateImageOptionsBuilder::default()
         .from_image(image)
         .build();
 
     let mut progress = docker.create_image(Some(options), None, None);
 
-    // 消费完stream，等待拉取完成
+    // Consume the stream to wait for the pull to finish.
     while let Some(update) = progress
         .try_next()
         .await
@@ -46,7 +46,7 @@ pub async fn ensure_docker(docker: &Docker, image: &str, auto_pull: bool) -> Res
         }
     }
 
-    // 拉取完成后，确认这个镜像确实存在
+    // After pulling, verify that the image actually exists.
     docker
         .inspect_image(image)
         .await

@@ -9,8 +9,9 @@ use tokio::sync::mpsc;
 use crate::forwarder::{ForwardItem, Origin, SendJob};
 
 // intercepter -> controller -> forwarder
-// 由于消息是乱序的，而且不要钱forwarder在收到controller消息之后还从interceptor里面查数据
-// 所以intercepted的信息都要传递给controller，包括时间戳等
+// Messages can arrive out of order, and the forwarder should not have to query the
+// interceptor after receiving a controller decision. Pass all intercepted metadata,
+// including timestamps, to the controller.
 
 // interceptor -> controller
 #[derive(Debug)]
@@ -19,13 +20,13 @@ pub struct Intercepted {
     pub to: usize,
     pub channel_id: i32,
     pub packets: usize,
-    pub data: Vec<u8>,                 // 原始字节
+    pub data: Vec<u8>,                 // Raw bytes.
     pub intercepted_at: DateTime<Utc>, // wall clock
-    pub intercepted_instant: Instant,  // 单调时钟，用于计算时间差
+    pub intercepted_instant: Instant,  // Monotonic time for calculating elapsed durations.
 }
 
 pub struct Controller {
-    inbox: mpsc::UnboundedReceiver<Intercepted>, // interceptor塞进来的
+    inbox: mpsc::UnboundedReceiver<Intercepted>, // Messages supplied by the interceptor.
     to_forwarder: Sender<ForwardItem>,
 }
 
@@ -41,8 +42,8 @@ impl Controller {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        // 现在是单输入；接 Python 后这里变成 tokio::select! 两个分支
-        // （一个处理"拦到消息"，一个处理"决策回复"—— 两者之间没有任何顺序关系）
+        // There is one input for now. After integrating Python, use two tokio::select! branches:
+        // one for intercepted messages and one for decision replies, with no ordering between them.
         while let Some(msg) = self.inbox.recv().await {
             self.on_intercepted(msg)?;
         }
@@ -50,7 +51,7 @@ impl Controller {
     }
 
     fn on_intercepted(&mut self, msg: Intercepted) -> Result<()> {
-        // 组装SendJob（暂用一个随机delay占位）后推给forwarder
+        // Build a SendJob (using a random delay as a placeholder) and send it to the forwarder.
         let Intercepted {
             from,
             to,
@@ -70,7 +71,7 @@ impl Controller {
                 packets,
                 intercepted_at,
                 intercepted_instant,
-                data: None, // 没被篡改
+                data: None, // Not mutated.
             }),
             delay: Duration::from_millis(rand::rng().random_range(0..=200_u64)),
         };
