@@ -42,13 +42,15 @@ pub struct Config {
 pub struct RunPaths {
     pub testnet_config_dir: PathBuf,
     pub test_log_dir: PathBuf,
+    pub controller_socket: PathBuf,
 }
 
 impl RunPaths {
-    pub fn new(config_dir: PathBuf, log_dir: PathBuf) -> Self {
+    pub fn new(config_dir: PathBuf, log_dir: PathBuf, controller_socket: PathBuf) -> Self {
         Self {
             testnet_config_dir: config_dir,
             test_log_dir: log_dir,
+            controller_socket,
         }
     }
 }
@@ -85,6 +87,7 @@ impl Config {
         let run_paths = RunPaths {
             testnet_config_dir: root.clone().join(&cluster_id).join("config"),
             test_log_dir: root.clone().join(&cluster_id).join("logs"),
+            controller_socket: PathBuf::from("/tmp").join(format!("interceptor-{cluster_id}.sock")),
         };
         // 创建一下 root/cluster_id
         create_shared_dir(&root.join(&cluster_id))?;

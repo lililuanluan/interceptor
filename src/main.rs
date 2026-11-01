@@ -11,8 +11,8 @@ use interceptor::message::MessageLog;
 use interceptor::network::{Network, NetworkEvent};
 use interceptor::node::Node as MyNode;
 use interceptor::resource_manager::ResourceManager;
-use interceptor::testnet;
 use interceptor::transaction::{Tx, TxLog, TxSubmitter};
+use interceptor::{ipc, testnet};
 use tokio::signal::unix::{SignalKind, signal};
 
 // timeout 默认发送SIGTERM
@@ -54,6 +54,12 @@ async fn main() -> Result<()> {
     let scripts_dir = config.get_scripts_dir()?;
 
     println!("run paths: {:?}", run_paths);
+
+    let controller_connection = tokio::time::timeout(
+        Duration::from_secs(5),
+        ipc::connect(&run_paths.controller_socket),
+    )
+    .await??;
 
     testnet::init_testnet_config(
         &docker,

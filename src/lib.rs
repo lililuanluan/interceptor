@@ -33,6 +33,7 @@ pub mod controller;
 pub mod docker;
 pub mod filepath;
 pub mod forwarder;
+pub mod ipc;
 pub mod logger;
 pub mod message;
 pub mod network;

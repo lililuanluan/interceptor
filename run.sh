@@ -1,10 +1,13 @@
 #!/bin/bash
 
-set -e
-LOGS="./logs"
-mkdir -p $LOGS
-TID="test_interceptor_dir"
-rm -rf $LOGS/$TID
+#!/bin/bash
+
+set -euo pipefail
+cd -- "$(dirname -- "$0")"
+
+mkdir -p ./logs
+
 RUSTFLAGS="-Awarnings" cargo build --release
-timeout --foreground 100 ./target/release/interceptor-dev --cluster-id $TID --log-root $LOGS --tx-config-yaml ./tx-example.yaml
+
+exec python3 -u controller/main.py
 
