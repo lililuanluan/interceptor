@@ -149,8 +149,8 @@ async fn main() -> Result<()> {
                     NetworkEvent::AllBlocksReached => {
                         println!("all nodes reached block {target_height}, exiting");
                     }
-                    NetworkEvent::InterceptorStopped => {
-                        println!("an interceptor task stopped");
+                    NetworkEvent::RelayStopped => {
+                        println!("relay tasks stopped");
                     }
                 }
             }
@@ -184,18 +184,31 @@ async fn main() -> Result<()> {
     // 这里退出之后，可能是interceptor正常退出，也可能是收到了信号
     // 如果是先收到信号，interceptor_task还在跑着，这里通过执行清理socket以及容器之后，interceptor_task就会自己报错，然后就结束了
     let cleanup_result = rm.cleanup().await;
-    // 等待所有interceptor任务退出
-    while let Some(result) = network.join_next().await {
+
+    // 等待所有方向上的拦截任务退出
+    while let Some(result) = network.intercept_tasks.join_next().await {
         // 这些报错基本都是 shutdown + cleanup 关掉socket后 read 失败导致的
         match result {
+            Ok((_, _, Ok(()))) => {}
+            Ok((from, to, Err(err))) if is_expected_shutdown_error(&err) => {}
+            Ok((from, to, Err(err))) => eprintln!("direction {from}->{to} failed: {err:#}"),
+            Err(err) => eprintln!("direction task error: {err}"),
+        }
+    }
+
+    // 等待relay任务退出
+    while let Some(result) = network.relay_tasks.join_next().await {
+        match result {
             Ok(Ok(())) => {}
-            // 主动关闭 socket 通常会使 read_exact 返回错误。
             Ok(Err(err)) if is_expected_shutdown_error(&err) => {}
             Ok(Err(err)) => {
-                eprintln!("interceptor failed: {err:#}");
+                eprintln!("relay task failed: {err:#}");
+                if run_result.is_ok() {
+                    run_result = Err(err);
+                }
             }
             Err(err) => {
-                eprintln!("interceptor task error：{err}");
+                eprintln!("relay task error: {err}");
                 if run_result.is_ok() {
                     run_result = Err(err.into());
                 }

@@ -160,10 +160,6 @@ impl<W: Write + Send + 'static> Forwarder<W> {
             received,
             delay,
         } = job;
-        let writer = self
-            .node_writers
-            .get_mut(&(from, to))
-            .with_context(|| format!("unknown direction {from}->{to}"))?;
 
         let message = CompleteMessage {
             channel_id,
@@ -171,7 +167,22 @@ impl<W: Write + Send + 'static> Forwarder<W> {
             packet_count: 0, // 这里不会用到
         };
 
-        send_complete_message(writer, &message).with_context(|| format!("send {from} -> {to}"))?;
+        let send_error = match self.node_writers.get_mut(&(from, to)) {
+            None => return Ok(()), // 这个方向已经断开，直接丢弃
+            Some(writer) => send_complete_message(writer, &message)
+                .with_context(|| format!("send {from} -> {to}"))
+                .err(),
+        };
+
+        if let Some(err) = send_error {
+            eprintln!("forward {from} -> {to} failed: {err:#}");
+            // 如果是写失败了，则这条线路的数据流直接断了，无法继续使用
+            // 之前是全局退出，这里改为只移除这条失败的链接然后继续运行测试
+            // 对于这条线路，第一次会失败并被移除，第二次在node_writers.get的时候返回None，什么都不做
+            // 这是对应如果拜占庭节点发送了某条消息导致其他节点与它断连的时候，仍希望继续运行其他节点直到目标block height
+            self.node_writers.remove(&(from, to));
+            return Ok(());
+        }
 
         // 写日志
         let (packets, intercepted_at, intercepted_us) = match &received {
@@ -213,11 +224,16 @@ impl<W: Write + Send + 'static> Forwarder<W> {
     }
 
     pub fn send_pingpong(&mut self, from: usize, to: usize, sum: Sum) -> Result<()> {
-        let writer = self
-            .node_writers
-            .get_mut(&(from, to))
-            .with_context(|| format!("unknown direction {from}->{to}"))?;
-        send_packet(writer, &Packet { sum: Some(sum) })
-            .with_context(|| format!("send control {from}->{to}"))
+        let send_error = match self.node_writers.get_mut(&(from, to)) {
+            None => return Ok(()),
+            Some(writer) => send_packet(writer, &Packet { sum: Some(sum) })
+                .with_context(|| format!("send pingpong {from}->{to}"))
+                .err(),
+        };
+        if let Some(err) = send_error {
+            eprintln!("pingpong {from}->{to} failed: {err:#}");
+            self.node_writers.remove(&(from, to));
+        }
+        Ok(())
     }
 }

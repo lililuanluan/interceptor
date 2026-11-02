@@ -8,7 +8,7 @@ use chrono::Utc;
 use tendermint_proto::p2p::packet::Sum;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-use tokio::task::{JoinError, JoinSet};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::block_monitor::{BlockLog, join_monitors, run_block_height_monitor};
@@ -23,7 +23,8 @@ use crate::transaction::TxSubmitter;
 
 pub struct Network {
     pub nodes: Vec<Node>,
-    pub interceptor_tasks: JoinSet<Result<()>>,
+    pub intercept_tasks: JoinSet<(usize, usize, Result<()>)>, // 两两节点之间收发消息的任务。一个节点断连退出应该继续跑测试
+    pub relay_tasks: JoinSet<Result<()>>, // controller + forwarder组成的转发链路；任一退出则实验结束
     pub block_monitor_tasks: JoinSet<Result<()>>,
     shutdown: CancellationToken, // 通知所有异步任务退出
     started_instant: Instant,
@@ -31,7 +32,7 @@ pub struct Network {
 
 pub enum NetworkEvent {
     AllBlocksReached,
-    InterceptorStopped, // interceptor_tasks意外结束，正常情况下会一直循环转发任务
+    RelayStopped, // 正常情况下会一直循环转发任务
 }
 
 // 拦截packet，组装message，推送给controller/forwarder
@@ -83,7 +84,8 @@ impl Network {
     pub fn new(nodes: Vec<Node>, started_instant: Instant) -> Self {
         Self {
             nodes,
-            interceptor_tasks: JoinSet::new(),
+            intercept_tasks: JoinSet::new(),
+            relay_tasks: JoinSet::new(),
             block_monitor_tasks: JoinSet::new(),
             shutdown: CancellationToken::new(),
             started_instant,
@@ -125,9 +127,6 @@ impl Network {
         }
         Ok(())
     }
-    pub fn join_next(&mut self) -> impl Future<Output = Option<Result<Result<()>, JoinError>>> {
-        self.interceptor_tasks.join_next()
-    }
 
     pub async fn join_block_tasks(&mut self) -> Result<()> {
         // 等待所有block monitor结束
@@ -136,16 +135,32 @@ impl Network {
     }
 
     pub async fn wait_event(&mut self) -> Result<NetworkEvent> {
-        tokio::select! {
-            result = join_monitors(&mut self.block_monitor_tasks, self.shutdown.clone()) => {
-                result.context("block monitor failed")?;
-                Ok(NetworkEvent::AllBlocksReached)
-            }
-            // interceptor_tasks是一个任务集合，哪个任务先返回就被join_next()取出
-            result = self.interceptor_tasks.join_next() => {
-                let result = result.context("No interceptor task")?;
-                result??;
-                Ok(NetworkEvent::InterceptorStopped)
+        let monitors = join_monitors(&mut self.block_monitor_tasks, self.shutdown.clone());
+        tokio::pin!(monitors);
+
+        loop {
+            let has_intercept_tasks = !self.intercept_tasks.is_empty();
+            tokio::select! {
+                result = &mut monitors => {
+                    result.context("block monitor failed")?;
+                    return Ok(NetworkEvent::AllBlocksReached);
+                }
+                result = self.relay_tasks.join_next() => {
+                    let result = result.context("no relay task")?;
+                    result??;
+                    return Ok(NetworkEvent::RelayStopped);
+                }
+                result = self.intercept_tasks.join_next(), if has_intercept_tasks => {
+                    match result {
+                        Some(Ok((from, to, Ok(())))) => println!("[direction {from}->{to}] closed"),
+                        Some(Ok((from, to, Err(err)))) => {
+                            eprintln!("[direction {from}->{to}] stopped: {err:#}");
+                        }
+                        Some(Err(err)) => eprintln!("direction task panicked: {err}"),
+                        None => {}
+                    }
+                    continue;
+                }
             }
         }
     }
@@ -184,8 +199,12 @@ impl Network {
                     // 把每个方向上的连接写端存下来给forwarder
                     writers.insert((from, to), writer);
 
-                    self.interceptor_tasks.spawn_blocking(move || {
-                        run_intercept_task(reader, from, to, controller_tx, forwarder_tx)
+                    self.intercept_tasks.spawn_blocking(move || {
+                        (
+                            from,
+                            to,
+                            run_intercept_task(reader, from, to, controller_tx, forwarder_tx),
+                        )
                     });
                 }
             }
@@ -194,7 +213,7 @@ impl Network {
         // controller_tx没有用了，但是forwarder_tx还要给controller的run task
         let started_instant = self.started_instant;
         let shutdown = self.shutdown.clone();
-        self.interceptor_tasks.spawn_blocking(move || {
+        self.relay_tasks.spawn_blocking(move || {
             let mut forwarder = Forwarder::new(
                 forwarder_rx,
                 writers,
@@ -207,7 +226,7 @@ impl Network {
 
         let shutdown = self.shutdown.clone();
         let num_nodes = self.nodes.len();
-        self.interceptor_tasks.spawn(async move {
+        self.relay_tasks.spawn(async move {
             let controller = Controller::new(
                 controller_rx,
                 forwarder_tx,
