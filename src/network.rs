@@ -6,6 +6,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use tendermint_proto::p2p::packet::Sum;
+use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -153,6 +154,7 @@ impl Network {
         &mut self,
         rm: &mut ResourceManager,
         message_writer: LogWriter<MessageLog>,
+        controller_connection: UnixStream,
     ) -> Result<()> {
         // tx=transmit rx=receive
         // tx/rx是句柄，拿到tx只能send()，拿到rx只能receive()，所以关键是谁持有它
@@ -203,8 +205,17 @@ impl Network {
             forwarder.run()
         });
 
+        let shutdown = self.shutdown.clone();
+        let num_nodes = self.nodes.len();
         self.interceptor_tasks.spawn(async move {
-            let mut controller = Controller::new(controller_rx, forwarder_tx);
+            let controller = Controller::new(
+                controller_rx,
+                forwarder_tx,
+                controller_connection,
+                started_instant,
+                shutdown,
+                num_nodes,
+            );
             controller.run().await
         });
 

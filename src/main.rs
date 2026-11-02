@@ -13,6 +13,7 @@ use interceptor::node::Node as MyNode;
 use interceptor::resource_manager::ResourceManager;
 use interceptor::transaction::{Tx, TxLog, TxSubmitter};
 use interceptor::{ipc, testnet};
+use serde_json::json;
 use tokio::signal::unix::{SignalKind, signal};
 
 // timeout 默认发送SIGTERM
@@ -55,7 +56,7 @@ async fn main() -> Result<()> {
 
     println!("run paths: {:?}", run_paths);
 
-    let controller_connection = tokio::time::timeout(
+    let mut controller_connection = tokio::time::timeout(
         Duration::from_secs(5),
         ipc::connect(&run_paths.controller_socket),
     )
@@ -115,10 +116,32 @@ async fn main() -> Result<()> {
     );
 
     let mut run_result: Result<()> = async {
+        let config_dir = std::fs::canonicalize(&run_paths.testnet_config_dir)?;
+        // 在rust端生成配置文件和log日志路径之后，传回给python，python可以用私钥信息
+        tokio::time::timeout(Duration::from_secs(10), async {
+            ipc::send_json(
+                &mut controller_connection,
+                &json!({
+                    "type": "init",
+                    "config_dir": config_dir,
+                    "log_dir": std::fs::canonicalize(&run_paths.test_log_dir)?,
+                }),
+            )
+            .await?;
+            let response = ipc::receive_json(&mut controller_connection).await?;
+            ensure!(
+                response == json!({"type": "initialized"}),
+                "Unexpected controller init response: {response}"
+            );
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
         network
             .subscribe_blocks_all(target_height, blocks_writer, tx_submitter.clone())
             .await?;
-        network.connect_all(&mut rm, message_writer).await?;
+        network
+            .connect_all(&mut rm, message_writer, controller_connection)
+            .await?;
         // interceptor正常退出，收到ctrlc，收到term，这三件事都有可能发生，这里就是询问这三个句柄哪个发生了就执行哪个
         tokio::select! {
             event = network.wait_event() => {

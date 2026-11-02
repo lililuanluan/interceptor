@@ -98,8 +98,6 @@ impl LogSchema for TxLog {
 struct CheckTxResult {
     code: u32,
     hash: String,
-    #[serde(default)]
-    log: String,
 }
 
 async fn submit_tx(
